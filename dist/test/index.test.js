@@ -1,0 +1,423 @@
+import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
+import test from "node:test";
+import { createPiExecutorExtension } from "../src/index.js";
+class FakeUI {
+    notifications = [];
+    statuses = new Map();
+    editor = {};
+    notify(message, type) {
+        if (type === undefined) {
+            this.notifications.push({ message });
+            return;
+        }
+        this.notifications.push({ message, type });
+    }
+    setStatus(key, text) {
+        this.statuses.set(key, text);
+    }
+    confirm() {
+        return Promise.resolve(false);
+    }
+    custom() {
+        return Promise.reject(new Error("not implemented"));
+    }
+    input() {
+        return Promise.resolve(undefined);
+    }
+    onTerminalInput() {
+        return () => { };
+    }
+    select() {
+        return Promise.resolve(undefined);
+    }
+    setFooter() { }
+    setHeader() { }
+    setHiddenThinkingLabel() { }
+    setTitle() { }
+    setWidget() { }
+    setWorkingMessage() { }
+    pasteToEditor() { }
+    setEditorText() { }
+    getEditorText() {
+        return "";
+    }
+}
+class FakeSessionManager {
+    entries;
+    constructor(entries) {
+        this.entries = entries;
+    }
+    getBranch() {
+        return this.entries;
+    }
+    getCwd() {
+        return "/workspace";
+    }
+    getEntries() {
+        return this.entries;
+    }
+    getEntry() {
+        return undefined;
+    }
+    getHeader() {
+        return {
+            type: "session",
+            cwd: "/workspace",
+            id: "session-1",
+            timestamp: new Date(0).toISOString(),
+        };
+    }
+    getLabel() {
+        return undefined;
+    }
+    getLeafEntry() {
+        return undefined;
+    }
+    getLeafId() {
+        return undefined;
+    }
+    getSessionDir() {
+        return "/workspace/.pi/sessions";
+    }
+    getSessionFile() {
+        return "/workspace/.pi/sessions/session.jsonl";
+    }
+    getSessionId() {
+        return "session-1";
+    }
+    getSessionName() {
+        return undefined;
+    }
+    getTree() {
+        return [];
+    }
+}
+class FakePi {
+    commands = new Map();
+    tools = new Map();
+    handlers = new Map();
+    appended = [];
+    registerCommand(name, command) {
+        this.commands.set(name, command);
+    }
+    registerTool(tool) {
+        this.tools.set(tool.name, tool);
+    }
+    appendEntry(customType, data) {
+        if (data === undefined) {
+            this.appended.push({ customType });
+            return;
+        }
+        this.appended.push({ customType, data });
+    }
+    on(event, handler) {
+        const handlers = this.handlers.get(event) ?? [];
+        handlers.push(handler);
+        this.handlers.set(event, handlers);
+    }
+    async trigger(event, ctx) {
+        for (const handler of this.handlers.get(event) ?? []) {
+            await handler({ type: event }, ctx);
+        }
+    }
+}
+const config = {
+    executorCommand: "executor",
+    startupTimeoutMs: 30_000,
+    loginPath: "/sources/add",
+    autoProbeOnSessionStart: true,
+};
+const instance = {
+    instanceId: "instance-1",
+    cwdRealpath: "/workspace",
+    port: 8788,
+    baseUrl: "http://127.0.0.1:8788",
+    localDataDir: "/workspace/.executor",
+    pidFile: "/workspace/server.pid",
+    logFile: "/workspace/server.log",
+};
+const installation = {
+    scopeId: "workspace-1",
+    actorScopeId: "actor-1",
+    resolutionScopeIds: ["workspace-1"],
+};
+const completedEnvelope = () => ({
+    execution: {
+        id: "exec-1",
+        scopeId: "workspace-1",
+        createdByScopeId: "workspace-1",
+        status: "completed",
+        code: "return 1",
+        resultJson: "{\"ok\":true}",
+        errorText: null,
+        logsJson: null,
+        startedAt: 1,
+        completedAt: 2,
+        createdAt: 1,
+        updatedAt: 2,
+    },
+    pendingInteraction: null,
+});
+const waitingFormEnvelope = () => ({
+    ...completedEnvelope(),
+    execution: {
+        ...completedEnvelope().execution,
+        status: "waiting_for_interaction",
+        resultJson: null,
+        completedAt: null,
+    },
+    pendingInteraction: {
+        id: "interaction-form",
+        executionId: "exec-1",
+        status: "pending",
+        kind: "form",
+        purpose: "tool_execution_gate",
+        payloadJson: JSON.stringify({
+            elicitation: {
+                message: "Need confirmation",
+                mode: "form",
+                requestedSchema: {
+                    type: "object",
+                    properties: {
+                        approved: {
+                            type: "boolean",
+                        },
+                    },
+                    required: ["approved"],
+                },
+            },
+        }),
+        responseJson: null,
+        responsePrivateJson: null,
+        createdAt: 1,
+        updatedAt: 2,
+    },
+});
+const waitingUrlEnvelope = () => ({
+    ...waitingFormEnvelope(),
+    pendingInteraction: {
+        ...waitingFormEnvelope().pendingInteraction,
+        id: "interaction-url",
+        kind: "url",
+        payloadJson: JSON.stringify({
+            elicitation: {
+                message: "Approve browser login",
+                mode: "url",
+                url: "https://example.com/approve",
+            },
+        }),
+    },
+});
+const createContext = (entries = []) => {
+    const ui = new FakeUI();
+    return {
+        ctx: {
+            cwd: "/workspace",
+            sessionManager: new FakeSessionManager(entries),
+            ui,
+            hasUI: true,
+            modelRegistry: { getApiKey: () => undefined },
+            model: undefined,
+            isIdle: () => true,
+            signal: undefined,
+            abort: () => { },
+            hasPendingMessages: () => false,
+            shutdown: () => { },
+            getContextUsage: () => undefined,
+            compact: () => { },
+            getSystemPrompt: () => "",
+        },
+        ui,
+    };
+};
+const createServices = (overrides) => ({
+    loadConfig: async () => config,
+    resolveExecutorInstance: async () => instance,
+    ensureExecutorRunning: async () => instance,
+    isReachable: async () => true,
+    openBrowser: async () => { },
+    getInstallation: async () => installation,
+    createExecution: async () => completedEnvelope(),
+    getExecution: async () => completedEnvelope(),
+    resumeExecution: async () => completedEnvelope(),
+    pollExecution: async (_baseUrl, _workspaceId, _executionId, options) => options?.initialEnvelope ?? completedEnvelope(),
+    ...overrides,
+});
+test("extension registers commands and tools", () => {
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices())(pi);
+    assert.deepEqual([...pi.commands.keys()].sort(), ["executor-login", "executor-status", "executor-web"]);
+    assert.deepEqual([...pi.tools.keys()].sort(), ["executor_execute", "executor_resume"]);
+});
+test("/executor-web opens the workspace-local base URL", async () => {
+    const opened = [];
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices({ openBrowser: async (url) => void opened.push(url) }))(pi);
+    const { ctx, ui } = createContext();
+    await pi.commands.get("executor-web").handler("", ctx);
+    assert.deepEqual(opened, ["http://127.0.0.1:8788"]);
+    assert.match(ui.notifications[0]?.message ?? "", /Executor is ready/);
+});
+test("/executor-login opens the configured login path", async () => {
+    const opened = [];
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices({ openBrowser: async (url) => void opened.push(url) }))(pi);
+    const { ctx } = createContext();
+    await pi.commands.get("executor-login").handler("", ctx);
+    assert.deepEqual(opened, ["http://127.0.0.1:8788/sources/add"]);
+});
+test("/executor-status reports online and offline states", async () => {
+    const onlinePi = new FakePi();
+    createPiExecutorExtension(createServices())(onlinePi);
+    const online = createContext();
+    await onlinePi.commands.get("executor-status").handler("", online.ctx);
+    assert.match(online.ui.notifications[0]?.message ?? "", /scopeId: workspace-1/);
+    const offlinePi = new FakePi();
+    createPiExecutorExtension(createServices({ isReachable: async () => false }))(offlinePi);
+    const offline = createContext();
+    await offlinePi.commands.get("executor-status").handler("", offline.ctx);
+    assert.match(offline.ui.notifications[0]?.message ?? "", /Executor is not running/);
+});
+test("executor_execute returns completed results and persists branch-local state", async () => {
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices({
+        createExecution: async () => ({
+            ...completedEnvelope(),
+            execution: {
+                ...completedEnvelope().execution,
+                status: "running",
+            },
+        }),
+        pollExecution: async () => completedEnvelope(),
+    }))(pi);
+    const { ctx, ui } = createContext();
+    const result = await pi.tools.get("executor_execute").execute("tool-1", { code: "return 1" }, undefined, undefined, ctx);
+    assert.equal(result.details.status, "completed");
+    assert.equal(pi.appended[0]?.customType, "pi-executor-state");
+    assert.equal(pi.appended[0]?.data?.lastExecutionId, "exec-1");
+    assert.equal(ui.statuses.get("pi-executor"), "executor: ready");
+});
+test("executor_execute returns waiting_for_interaction details", async () => {
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices({
+        createExecution: async () => waitingFormEnvelope(),
+        pollExecution: async () => waitingFormEnvelope(),
+    }))(pi);
+    const { ctx, ui } = createContext();
+    const result = await pi.tools.get("executor_execute").execute("tool-1", { code: "return 1" }, undefined, undefined, ctx);
+    assert.equal(result.details.status, "waiting_for_interaction");
+    assert.deepEqual(result.details.interaction?.requestedSchema, {
+        type: "object",
+        properties: {
+            approved: {
+                type: "boolean",
+            },
+        },
+        required: ["approved"],
+    });
+    assert.equal(ui.statuses.get("pi-executor"), "executor: waiting");
+});
+test("executor_resume does not POST resume for terminal executions", async () => {
+    const resumes = [];
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices({
+        getExecution: async () => completedEnvelope(),
+        resumeExecution: async () => {
+            resumes.push("resume");
+            return completedEnvelope();
+        },
+    }))(pi);
+    const { ctx } = createContext();
+    const result = await pi.tools.get("executor_resume").execute("tool-2", { executionId: "exec-1", responseJson: undefined }, undefined, undefined, ctx);
+    assert.equal(result.details.status, "completed");
+    assert.deepEqual(resumes, []);
+});
+test("executor_resume requires explicit responseJson for form interactions", async () => {
+    const resumes = [];
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices({
+        getExecution: async () => waitingFormEnvelope(),
+        resumeExecution: async () => {
+            resumes.push("resume");
+            return completedEnvelope();
+        },
+    }))(pi);
+    const { ctx, ui } = createContext();
+    const result = await pi.tools.get("executor_resume").execute("tool-3", { executionId: "exec-1", responseJson: undefined }, undefined, undefined, ctx);
+    assert.equal(result.details.status, "waiting_for_interaction");
+    assert.equal(result.details.nextAction.kind, "resume_with_responseJson");
+    assert.deepEqual(resumes, []);
+    assert.equal(ui.statuses.get("pi-executor"), "executor: waiting");
+});
+test("executor_resume opens URL interactions without implicitly submitting a form response", async () => {
+    const opened = [];
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices({
+        getExecution: async () => waitingUrlEnvelope(),
+        openBrowser: async (url) => void opened.push(url),
+        pollExecution: async () => waitingUrlEnvelope(),
+    }))(pi);
+    const { ctx } = createContext();
+    const result = await pi.tools.get("executor_resume").execute("tool-4", { executionId: "exec-1", responseJson: undefined }, undefined, undefined, ctx);
+    assert.equal(result.details.status, "waiting_for_interaction");
+    assert.equal(result.details.nextAction.kind, "open_url_or_resume");
+    assert.deepEqual(opened, ["https://example.com/approve"]);
+});
+test("executor_resume submits explicit responseJson and returns the settled result", async () => {
+    const pi = new FakePi();
+    let resumedWith;
+    createPiExecutorExtension(createServices({
+        getExecution: async () => waitingFormEnvelope(),
+        resumeExecution: async (_baseUrl, _workspaceId, _executionId, responseJson) => {
+            resumedWith = responseJson;
+            return completedEnvelope();
+        },
+        pollExecution: async () => completedEnvelope(),
+    }))(pi);
+    const { ctx } = createContext();
+    const result = await pi.tools.get("executor_resume").execute("tool-5", { executionId: "exec-1", responseJson: "{\"approved\":true}" }, undefined, undefined, ctx);
+    assert.equal(resumedWith, "{\"approved\":true}");
+    assert.equal(result.details.status, "completed");
+});
+test("executor_resume polls executions that are already running", async () => {
+    const pi = new FakePi();
+    let pollCount = 0;
+    createPiExecutorExtension(createServices({
+        getExecution: async () => ({
+            ...completedEnvelope(),
+            execution: {
+                ...completedEnvelope().execution,
+                status: "running",
+                resultJson: null,
+                completedAt: null,
+            },
+        }),
+        pollExecution: async () => {
+            pollCount += 1;
+            return completedEnvelope();
+        },
+    }))(pi);
+    const { ctx, ui } = createContext();
+    const result = await pi.tools.get("executor_resume").execute("tool-6", { executionId: "exec-1", responseJson: undefined }, undefined, undefined, ctx);
+    assert.equal(pollCount, 1);
+    assert.equal(result.details.status, "completed");
+    assert.equal(ui.statuses.get("pi-executor"), "executor: ready");
+});
+test("session hooks restore branch-local waiting state and clear status on shutdown", async () => {
+    const pi = new FakePi();
+    createPiExecutorExtension(createServices())(pi);
+    const restoredState = {
+        lastExecutionId: "exec-1",
+        lastSeenStatus: "waiting_for_interaction",
+        lastInteractionId: "interaction-form",
+    };
+    const { ctx, ui } = createContext([
+        { type: "custom", customType: "pi-executor-state", data: restoredState },
+    ]);
+    await pi.trigger("session_start", ctx);
+    await delay(0);
+    assert.equal(ui.statuses.get("pi-executor"), "executor: waiting");
+    await pi.trigger("session_shutdown", ctx);
+    assert.equal(ui.statuses.get("pi-executor"), undefined);
+});
