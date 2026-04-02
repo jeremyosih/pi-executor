@@ -28,9 +28,7 @@
     "lint:fix": "oxlint --fix",
     "prepare": "[ -d .git ] && husky || true",
     "check:lockfile": "bun install --frozen-lockfile --ignore-scripts",
-    "changeset": "changeset",
-    "version": "changeset version",
-    "release": "bunx changeset publish"
+    "local-release": "changeset version && changeset publish"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
