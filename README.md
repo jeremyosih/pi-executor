@@ -1,5 +1,11 @@
 # pi-executor
 
+A Pi extension that provides a sandbox typescript execution layer on top of Pi. Connect Any MCP & OpenApi securely.
+
+Built on top of [Executor](https://executor.sh)
+
+WIP: Waiting for v4 release
+
 To install dependencies:
 
 ```bash
@@ -11,5 +17,3 @@ To run:
 ```bash
 bun run index.ts
 ```
-
-This project was created using `bun init` in bun v1.2.17. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.

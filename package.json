@@ -1,27 +1,37 @@
 {
   "name": "pi-executor",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "Pi extension to run executor",
   "keywords": [
-    "pi",
-    "executor"
+    "executor",
+    "pi"
   ],
   "homepage": "https://github.com/jeremyosih/pi-executor",
   "bugs": {
     "url": "https://github.com/jeremyosih/pi-executor/issues"
   },
+  "license": "MIT",
   "author": "Jeremy Osih",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jeremyosih/pi-executor.git"
   },
   "type": "module",
-  "module": "index.ts",
-  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "oxfmt": "^0.43.0"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "pi": {
+    "extensions": [
+      ".src/index.ts"
+    ]
   }
 }
