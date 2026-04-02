@@ -1,10 +1,13 @@
 {
   "name": "pi-executor",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Pi extension to run executor",
   "keywords": [
+    "code-mode",
     "executor",
-    "pi"
+    "pi",
+    "pi-extension",
+    "pi-package"
   ],
   "homepage": "https://github.com/jeremyosih/pi-executor",
   "bugs": {
@@ -23,21 +26,23 @@
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "prepare": "husky"
+    "prepare": "[ -d .git ] && husky || true",
+    "check:lockfile": "bun install --frozen-lockfile --ignore-scripts",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "bunx changeset publish"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
     "@types/bun": "latest",
     "husky": "^9.1.7",
     "oxfmt": "^0.43.0",
-    "oxlint": "^1.58.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "oxlint": "^1.58.0",
+    "typescript": "^5.9.3"
   },
   "pi": {
     "extensions": [
-      ".src/index.ts"
+      "./src/index.ts"
     ]
   }
 }
