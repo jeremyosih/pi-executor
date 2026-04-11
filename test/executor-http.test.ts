@@ -74,7 +74,7 @@ describe("http wrappers", () => {
       },
     });
 
-    await expect(execute(pausedServer, "pause()")) .resolves.toEqual({
+    await expect(execute(pausedServer, "pause()")).resolves.toEqual({
       status: "paused",
       text: "waiting",
       structured: { executionId: "exec_1" },
@@ -99,7 +99,9 @@ describe("http wrappers", () => {
       },
     });
 
-    await expect(resume(notFoundBaseUrl, "missing", { action: "cancel" })).rejects.toBeInstanceOf(HttpError);
+    await expect(resume(notFoundBaseUrl, "missing", { action: "cancel" })).rejects.toBeInstanceOf(
+      HttpError,
+    );
   });
 
   test("lists tools, schemas, and sources", async () => {

@@ -128,7 +128,9 @@ const pushLogChunk = (tail: string[], chunk: string): void => {
   }
 };
 
-const runInstaller = async (paths: PackagePaths): Promise<{ stdoutTail: string[]; stderrTail: string[] }> => {
+const runInstaller = async (
+  paths: PackagePaths,
+): Promise<{ stdoutTail: string[]; stderrTail: string[] }> => {
   const stdoutTail: string[] = [];
   const stderrTail: string[] = [];
 
@@ -214,7 +216,12 @@ const isHealthyRecord = async (record: SidecarRecord): Promise<boolean> => {
   }
 };
 
-export const analyzePortProbe = (cwd: string, port: number, scope?: ScopeInfo, free = false): PortProbe => {
+export const analyzePortProbe = (
+  cwd: string,
+  port: number,
+  scope?: ScopeInfo,
+  free = false,
+): PortProbe => {
   if (scope && scope.dir === cwd) {
     return { port, kind: "reusable", scope };
   }
@@ -224,7 +231,9 @@ export const analyzePortProbe = (cwd: string, port: number, scope?: ScopeInfo, f
   return { port, kind: "occupied" };
 };
 
-export const selectPortCandidate = (probes: PortProbe[]): { reusable?: PortProbe; freePort?: number } => {
+export const selectPortCandidate = (
+  probes: PortProbe[],
+): { reusable?: PortProbe; freePort?: number } => {
   for (const probe of probes) {
     if (probe.kind === "reusable") {
       return { reusable: probe };
@@ -423,7 +432,9 @@ export const stopSidecar = async (record: SidecarRecord): Promise<void> => {
 export const getSidecarRecord = (cwdInput: string): SidecarRecord | undefined =>
   sidecarsByCwd.get(normalizeDir(cwdInput));
 
-export const stopOwnedSidecarForCwd = async (cwdInput: string): Promise<"stopped" | "unowned" | "missing"> => {
+export const stopOwnedSidecarForCwd = async (
+  cwdInput: string,
+): Promise<"stopped" | "unowned" | "missing"> => {
   const record = getSidecarRecord(cwdInput);
   if (!record) {
     return "missing";

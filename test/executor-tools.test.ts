@@ -12,12 +12,16 @@ import {
 const cleanupPaths: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(cleanupPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(
+    cleanupPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+  );
 });
 
 describe("tool helpers", () => {
   test("builds helper snippets without undefined fields", () => {
-    expect(buildSearchSnippet({ query: "users" })).toBe('return tools.search({\n  "query": "users"\n});');
+    expect(buildSearchSnippet({ query: "users" })).toBe(
+      'return tools.search({\n  "query": "users"\n});',
+    );
     expect(buildDescribeSnippet({ path: "tool.alpha" })).toBe(
       'return tools.describe.tool({\n  "path": "tool.alpha"\n});',
     );

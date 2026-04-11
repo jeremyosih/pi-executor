@@ -173,7 +173,10 @@ export const fetchJson = async <T>(
 ): Promise<T> => {
   const url = new URL(path, baseUrl);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS,
+  );
 
   try {
     const response = await fetch(url, {
@@ -345,17 +348,23 @@ export const resume = async (
   executionId: string,
   payload: ResumePayload,
 ): Promise<ResumeResponse> =>
-  fetchJson(baseUrl, `/api/executions/${encodeURIComponent(executionId)}/resume`, parseResumeResponse, {
-    method: "POST",
-    body: payload.content ? { action: payload.action, content: payload.content } : { action: payload.action },
-  });
-
-export const listTools = async (baseUrl: string, scopeId: string): Promise<ToolMetadataResponse[]> =>
   fetchJson(
     baseUrl,
-    `/api/scopes/${encodeURIComponent(scopeId)}/tools`,
-    parseToolMetadataList,
+    `/api/executions/${encodeURIComponent(executionId)}/resume`,
+    parseResumeResponse,
+    {
+      method: "POST",
+      body: payload.content
+        ? { action: payload.action, content: payload.content }
+        : { action: payload.action },
+    },
   );
+
+export const listTools = async (
+  baseUrl: string,
+  scopeId: string,
+): Promise<ToolMetadataResponse[]> =>
+  fetchJson(baseUrl, `/api/scopes/${encodeURIComponent(scopeId)}/tools`, parseToolMetadataList);
 
 export const getToolSchema = async (
   baseUrl: string,
@@ -369,11 +378,7 @@ export const getToolSchema = async (
   );
 
 export const listSources = async (baseUrl: string, scopeId: string): Promise<SourceResponse[]> =>
-  fetchJson(
-    baseUrl,
-    `/api/scopes/${encodeURIComponent(scopeId)}/sources`,
-    parseSourceList,
-  );
+  fetchJson(baseUrl, `/api/scopes/${encodeURIComponent(scopeId)}/sources`, parseSourceList);
 
 export const waitForHealthyScope = async (
   baseUrl: string,

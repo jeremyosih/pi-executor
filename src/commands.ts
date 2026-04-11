@@ -35,7 +35,12 @@ const launchBrowser = async (url: string): Promise<void> => {
   });
 };
 
-const notifyResult = (pi: ExtensionAPI, customType: string, text: string, details: JsonObject): void => {
+const notifyResult = (
+  pi: ExtensionAPI,
+  customType: string,
+  text: string,
+  details: JsonObject,
+): void => {
   pi.sendMessage({
     customType,
     content: text,
@@ -60,11 +65,16 @@ const handleExecutorWeb = async (pi: ExtensionAPI, cwd: string): Promise<void> =
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    notifyResult(pi, "executor-web", `Executor UI: ${sidecar.baseUrl}\n\nBrowser launch failed: ${message}`, {
-      baseUrl: sidecar.baseUrl,
-      scopeId: sidecar.scope?.id ?? "",
-      launched: false,
-    });
+    notifyResult(
+      pi,
+      "executor-web",
+      `Executor UI: ${sidecar.baseUrl}\n\nBrowser launch failed: ${message}`,
+      {
+        baseUrl: sidecar.baseUrl,
+        scopeId: sidecar.scope?.id ?? "",
+        launched: false,
+      },
+    );
   }
 };
 
@@ -89,19 +99,29 @@ const handleExecutorStop = async (pi: ExtensionAPI, cwd: string): Promise<void> 
   }
 
   if (outcome === "unowned") {
-    notifyResult(pi, "executor-stop", "Found an Executor sidecar for this cwd, but Pi did not start it, so it was left running.", {
-      cwd,
-      stopped: false,
-      reason: "unowned",
-    });
+    notifyResult(
+      pi,
+      "executor-stop",
+      "Found an Executor sidecar for this cwd, but Pi did not start it, so it was left running.",
+      {
+        cwd,
+        stopped: false,
+        reason: "unowned",
+      },
+    );
     return;
   }
 
-  notifyResult(pi, "executor-stop", "No Pi-owned Executor sidecar is currently tracked for this cwd.", {
-    cwd,
-    stopped: false,
-    reason: "missing",
-  });
+  notifyResult(
+    pi,
+    "executor-stop",
+    "No Pi-owned Executor sidecar is currently tracked for this cwd.",
+    {
+      cwd,
+      stopped: false,
+      reason: "missing",
+    },
+  );
 };
 
 export const registerExecutorCommands = (pi: ExtensionAPI): void => {

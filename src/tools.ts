@@ -116,7 +116,10 @@ const readStringRecord = (value: JsonValue | undefined): Record<string, string> 
     return undefined;
   }
 
-  const entries = Object.entries(value).filter(([, entry]) => typeof entry === "string") as [string, string][];
+  const entries = Object.entries(value).filter(([, entry]) => typeof entry === "string") as [
+    string,
+    string,
+  ][];
   return Object.fromEntries(entries);
 };
 
@@ -166,7 +169,10 @@ const toSourceList = (value: JsonValue): SourceListResult[] | undefined => {
   });
 };
 
-export const truncateToolOutput = async (text: string, tempPrefix: string): Promise<TruncatedOutput> => {
+export const truncateToolOutput = async (
+  text: string,
+  tempPrefix: string,
+): Promise<TruncatedOutput> => {
   const truncation = truncateHead(text, {
     maxLines: DEFAULT_MAX_LINES,
     maxBytes: DEFAULT_MAX_BYTES,
@@ -201,7 +207,11 @@ export const truncateToolOutput = async (text: string, tempPrefix: string): Prom
 const formatJsonResult = async (value: JsonValue, tempPrefix: string): Promise<TruncatedOutput> =>
   truncateToolOutput(jsonIndent(value), tempPrefix);
 
-export const describeViaHttp = async (baseUrl: string, scopeId: string, path: string): Promise<DescribeResult> => {
+export const describeViaHttp = async (
+  baseUrl: string,
+  scopeId: string,
+  path: string,
+): Promise<DescribeResult> => {
   const tools = await listTools(baseUrl, scopeId);
   const metadata = tools.find((tool) => tool.id === path);
   const schema = await getToolSchema(baseUrl, scopeId, path);
@@ -215,7 +225,10 @@ export const describeViaHttp = async (baseUrl: string, scopeId: string, path: st
   };
 };
 
-export const listSourcesViaHttp = async (baseUrl: string, scopeId: string): Promise<SourceListResult[]> => {
+export const listSourcesViaHttp = async (
+  baseUrl: string,
+  scopeId: string,
+): Promise<SourceListResult[]> => {
   const sources = await listSources(baseUrl, scopeId);
   return sources.map((source) => ({
     id: source.id,
@@ -228,7 +241,10 @@ export const listSourcesViaHttp = async (baseUrl: string, scopeId: string): Prom
   }));
 };
 
-const executeSnippet = async (cwd: string, code: string): Promise<{ baseUrl: string; scopeId: string; result: ExecuteResponse }> => {
+const executeSnippet = async (
+  cwd: string,
+  code: string,
+): Promise<{ baseUrl: string; scopeId: string; result: ExecuteResponse }> => {
   const sidecar = await ensureSidecar(cwd);
   const scopeId = sidecar.scope?.id ?? (await ensureSidecar(cwd)).scope?.id;
   if (!scopeId) {
@@ -246,8 +262,10 @@ const jsonStringSchema = Type.String({ description: "JSON object string" });
 const executeTool = defineTool({
   name: "executor_execute",
   label: "Executor Execute",
-  description: "Execute JavaScript code in the local Executor sidecar for the current working directory.",
-  promptSnippet: "Execute JavaScript in the local Executor sidecar for the current working directory.",
+  description:
+    "Execute JavaScript code in the local Executor sidecar for the current working directory.",
+  promptSnippet:
+    "Execute JavaScript in the local Executor sidecar for the current working directory.",
   promptGuidelines: ["Use this when you need Executor's runtime instead of Pi's built-in tools."],
   parameters: Type.Object({
     code: Type.String({ description: "JavaScript code to execute" }),
@@ -256,7 +274,9 @@ const executeTool = defineTool({
     const sidecar = await ensureSidecar(ctx.cwd);
     const result = await execute(sidecar.baseUrl, params.code);
     const executionId =
-      result.status === "paused" && isJsonObject(result.structured) && typeof result.structured.executionId === "string"
+      result.status === "paused" &&
+      isJsonObject(result.structured) &&
+      typeof result.structured.executionId === "string"
         ? result.structured.executionId
         : undefined;
 
@@ -337,18 +357,27 @@ const searchTool = defineTool({
 const describeTool = defineTool({
   name: "executor_describe",
   label: "Executor Describe",
-  description: "Describe an Executor tool, preferring Executor's helper path and falling back to HTTP metadata/schema endpoints.",
+  description:
+    "Describe an Executor tool, preferring Executor's helper path and falling back to HTTP metadata/schema endpoints.",
   promptSnippet: "Describe a specific Executor tool id and return its TypeScript-facing shape.",
-  promptGuidelines: ["Use this after executor_search when you need a tool's exact schema or description."],
+  promptGuidelines: [
+    "Use this after executor_search when you need a tool's exact schema or description.",
+  ],
   parameters: Type.Object({
     path: Type.String({ description: "Executor tool path" }),
   }),
   async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-    const { baseUrl, scopeId, result } = await executeSnippet(ctx.cwd, buildDescribeSnippet(params));
+    const { baseUrl, scopeId, result } = await executeSnippet(
+      ctx.cwd,
+      buildDescribeSnippet(params),
+    );
 
     let described: DescribeResult;
     if (isCompletedNonError(result)) {
-      const helperResult = toDescribeResult(unwrapStructuredResult(result) ?? result.structured, params.path);
+      const helperResult = toDescribeResult(
+        unwrapStructuredResult(result) ?? result.structured,
+        params.path,
+      );
       described = helperResult ?? (await describeViaHttp(baseUrl, scopeId, params.path));
     } else {
       described = await describeViaHttp(baseUrl, scopeId, params.path);
@@ -369,7 +398,8 @@ const describeTool = defineTool({
 const listSourcesTool = defineTool({
   name: "executor_list_sources",
   label: "Executor List Sources",
-  description: "List Executor sources, preferring Executor's helper path and falling back to HTTP source listing.",
+  description:
+    "List Executor sources, preferring Executor's helper path and falling back to HTTP source listing.",
   promptSnippet: "List configured Executor sources for the current working directory.",
   promptGuidelines: ["Use this before asking Executor to access source-backed tools."],
   parameters: Type.Object({
@@ -377,11 +407,16 @@ const listSourcesTool = defineTool({
     limit: Type.Optional(Type.Number({ description: "Maximum results" })),
   }),
   async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-    const { baseUrl, scopeId, result } = await executeSnippet(ctx.cwd, buildListSourcesSnippet(params));
+    const { baseUrl, scopeId, result } = await executeSnippet(
+      ctx.cwd,
+      buildListSourcesSnippet(params),
+    );
 
     let sources: SourceListResult[];
     if (isCompletedNonError(result)) {
-      sources = toSourceList(unwrapStructuredResult(result) ?? result.structured) ?? (await listSourcesViaHttp(baseUrl, scopeId));
+      sources =
+        toSourceList(unwrapStructuredResult(result) ?? result.structured) ??
+        (await listSourcesViaHttp(baseUrl, scopeId));
     } else {
       sources = await listSourcesViaHttp(baseUrl, scopeId);
     }
