@@ -21,6 +21,7 @@
   },
   "type": "module",
   "scripts": {
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
@@ -42,5 +43,13 @@
     "extensions": [
       "./src/index.ts"
     ]
+  },
+  "dependencies": {
+    "@executor-js/sdk": "^0.0.1-beta.2",
+    "executor": "^1.4.4"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "^0.66.1"
   }
 }

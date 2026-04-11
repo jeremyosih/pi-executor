@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": [""],
+  "ignorePatterns": ["docs/**"],
   "plugins": ["typescript", "unicorn", "oxc"],
   "categories": {
     "correctness": "error"

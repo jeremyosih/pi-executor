@@ -1,0 +1,12 @@
+[submodule "docs/executor"]
+	path = docs/executor
+	url = https://github.com/RhysSullivan/executor.git
+	branch = main
+[submodule "docs/pi-mono"]
+	path = docs/pi-mono
+	url = https://github.com/badlogic/pi-mono.git
+	branch = main
+[submodule "docs/pi-diff-review"]
+	path = docs/pi-diff-review
+	url = https://github.com/badlogic/pi-diff-review.git
+	branch = main
