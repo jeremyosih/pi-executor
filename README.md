@@ -20,13 +20,16 @@ Executor discovery helpers stay inside Executor's runtime and are meant to be us
 - `/executor-web`
 - `/executor-start`
 - `/executor-stop`
+- `/executor-settings`
 
 ## Runtime model
 
-- one local Executor sidecar per working directory
-- healthy same-cwd sidecars are reused across calls
-- Pi supervises only sidecars it started itself
-- the extension talks to Executor over local HTTP
+- configurable local or remote Executor endpoint per project
+- local mode uses one cwd-scoped Executor sidecar per working directory
+- healthy same-cwd local sidecars are reused across calls
+- Pi supervises only local sidecars it started itself
+- remote mode connects to `piExecutor.remoteUrl` and never spawns a local sidecar
+- the extension talks to Executor over HTTP
 - browser auth, source setup, and secret management stay in Executor's UI
 - `execute` mirrors MCP guidance and namespace discovery as closely as Pi allows
 - when Pi has UI, `execute` handles Executor interaction inline
@@ -52,6 +55,32 @@ If you clone the repo fresh, initialize them with:
 ```bash
 git submodule update --init --recursive
 ```
+
+## Use in Pi
+
+## Settings
+
+Configure the extension in `~/.pi/agent/settings.json` or `.pi/settings.json`:
+
+```json
+{
+  "piExecutor": {
+    "mode": "local",
+    "autoStart": true,
+    "remoteUrl": "",
+    "showFooterStatus": true,
+    "stopLocalOnShutdown": true
+  }
+}
+```
+
+- `mode`: `"local"` or `"remote"`
+- `autoStart`: connect on session start
+- `remoteUrl`: required for remote mode
+- `showFooterStatus`: show the footer readiness dot
+- `stopLocalOnShutdown`: stop Pi-owned local sidecars on session shutdown
+
+You can also manage these interactively with `/executor-settings`.
 
 ## Use in Pi
 

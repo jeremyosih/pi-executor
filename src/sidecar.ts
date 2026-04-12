@@ -1,16 +1,20 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:net";
-import { access } from "node:fs/promises";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { createServer } from "node:net";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { getScope, HttpError, type ScopeInfo } from "./http.ts";
 
 export const DEFAULT_PORT_SEED = 4788;
 export const PORT_SCAN_LIMIT = 32;
 export const HEALTH_TIMEOUT_MS = 2_000;
 export const STARTUP_TIMEOUT_MS = 30_000;
+export const SHUTDOWN_TIMEOUT_MS = 2_000;
 export const LOG_RING_BUFFER_LINES = 200;
+export const SIDECAR_REGISTRY_VERSION = 1;
 
 export type PackagePaths = {
   packageJsonPath: string;
@@ -30,6 +34,14 @@ export type SidecarRecord = {
   scope?: ScopeInfo;
   stdoutTail: string[];
   stderrTail: string[];
+};
+
+export type RegisteredSidecar = {
+  cwd: string;
+  pid: number;
+  port: number;
+  baseUrl: string;
+  startedAt: string;
 };
 
 export type PortProbe =
@@ -61,12 +73,105 @@ export class SidecarError extends Error {
   }
 }
 
+type SidecarRegistryFile = {
+  version: number;
+  sidecars: Record<string, RegisteredSidecar>;
+};
+
 const require = createRequire(import.meta.url);
 const sidecarsByCwd = new Map<string, SidecarRecord>();
 
 const normalizeDir = (cwd: string): string => resolve(cwd);
 
 const buildBaseUrl = (port: number): string => `http://127.0.0.1:${port}`;
+
+const emptySidecarRegistry = (): SidecarRegistryFile => ({
+  version: SIDECAR_REGISTRY_VERSION,
+  sidecars: {},
+});
+
+export const getSidecarRegistryPath = (): string =>
+  join(process.env.HOME || homedir(), ".pi", "agent", "executor-sidecars.json");
+
+const readSidecarRegistry = async (): Promise<SidecarRegistryFile> => {
+  try {
+    const raw = await readFile(getSidecarRegistryPath(), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return emptySidecarRegistry();
+    }
+
+    const sidecarsValue = "sidecars" in parsed ? parsed.sidecars : undefined;
+    const sidecars =
+      typeof sidecarsValue === "object" && sidecarsValue !== null && !Array.isArray(sidecarsValue)
+        ? (sidecarsValue as Record<string, RegisteredSidecar>)
+        : {};
+
+    return {
+      version:
+        "version" in parsed && typeof parsed.version === "number"
+          ? parsed.version
+          : SIDECAR_REGISTRY_VERSION,
+      sidecars,
+    };
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") {
+      return emptySidecarRegistry();
+    }
+    throw error;
+  }
+};
+
+const writeSidecarRegistry = async (registry: SidecarRegistryFile): Promise<void> => {
+  const path = getSidecarRegistryPath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(registry, null, 2) + "\n", "utf8");
+};
+
+export const getRegisteredSidecar = async (cwdInput: string): Promise<RegisteredSidecar | undefined> => {
+  const cwd = normalizeDir(cwdInput);
+  const registry = await readSidecarRegistry();
+  return registry.sidecars[cwd];
+};
+
+export const registerSidecarForCwd = async (record: RegisteredSidecar): Promise<void> => {
+  const cwd = normalizeDir(record.cwd);
+  const registry = await readSidecarRegistry();
+  registry.sidecars[cwd] = {
+    ...record,
+    cwd,
+  };
+  await writeSidecarRegistry(registry);
+};
+
+export const unregisterSidecarForCwd = async (cwdInput: string, pid?: number): Promise<void> => {
+  const cwd = normalizeDir(cwdInput);
+  const registry = await readSidecarRegistry();
+  const registered = registry.sidecars[cwd];
+  if (!registered) {
+    return;
+  }
+  if (pid !== undefined && registered.pid !== pid) {
+    return;
+  }
+  delete registry.sidecars[cwd];
+  await writeSidecarRegistry(registry);
+};
+
+const registerRuntimeSidecar = async (record: SidecarRecord): Promise<void> => {
+  if (!record.pid) {
+    return;
+  }
+
+  await registerSidecarForCwd({
+    cwd: record.cwd,
+    pid: record.pid,
+    port: record.port,
+    baseUrl: record.baseUrl,
+    startedAt: new Date().toISOString(),
+  });
+};
 
 export const isSupportedRuntimePlatform = (platform: NodeJS.Platform, arch: string): boolean => {
   const supportedPlatform = platform === "darwin" || platform === "linux" || platform === "win32";
@@ -203,6 +308,91 @@ const isPortFree = async (port: number): Promise<boolean> => {
   }
 };
 
+export const isPidRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error) {
+      return error.code !== "ESRCH";
+    }
+    return false;
+  }
+};
+
+const waitForPidExit = async (pid: number, timeoutMs: number): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    if (!isPidRunning(pid)) {
+      return true;
+    }
+    await delay(50);
+  }
+  return !isPidRunning(pid);
+};
+
+const terminatePid = async (pid: number): Promise<void> => {
+  if (!isPidRunning(pid)) {
+    return;
+  }
+
+  process.kill(pid, "SIGTERM");
+  if (await waitForPidExit(pid, SHUTDOWN_TIMEOUT_MS)) {
+    return;
+  }
+
+  process.kill(pid, "SIGKILL");
+  await waitForPidExit(pid, SHUTDOWN_TIMEOUT_MS);
+};
+
+const execFileText = async (command: string, args: string[]): Promise<string> => {
+  const result = await new Promise<{ stdout: string; stderr: string }>((resolveExec, reject) => {
+    execFile(command, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolveExec({ stdout, stderr });
+    });
+  });
+
+  return [result.stdout, result.stderr].filter((part) => part.trim().length > 0).join("\n");
+};
+
+const findPidByPort = async (port: number): Promise<number | undefined> => {
+  try {
+    if (process.platform === "win32") {
+      const output = await execFileText("netstat", ["-ano", "-p", "tcp"]);
+      for (const line of output.split(/\r?\n/)) {
+        if (!line.includes(`127.0.0.1:${port}`) && !line.includes(`0.0.0.0:${port}`)) {
+          continue;
+        }
+        if (!line.toUpperCase().includes("LISTENING")) {
+          continue;
+        }
+        const parts = line.trim().split(/\s+/);
+        const pid = Number(parts.at(-1));
+        if (Number.isInteger(pid) && pid > 0) {
+          return pid;
+        }
+      }
+      return undefined;
+    }
+
+    const output = await execFileText("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
+    for (const line of output.split(/\r?\n/)) {
+      const pid = Number(line.trim());
+      if (Number.isInteger(pid) && pid > 0) {
+        return pid;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+};
+
 const isHealthyRecord = async (record: SidecarRecord): Promise<boolean> => {
   try {
     const scope = await getScope(record.baseUrl, HEALTH_TIMEOUT_MS);
@@ -247,6 +437,32 @@ export const selectPortCandidate = (
 export const collectOwnedSidecars = (records: Iterable<SidecarRecord>): SidecarRecord[] =>
   Array.from(records).filter((record) => record.ownedByPi && record.child !== undefined);
 
+const hydrateRegisteredPid = async (record: SidecarRecord): Promise<SidecarRecord> => {
+  const registered = await getRegisteredSidecar(record.cwd);
+  if (registered && registered.port === record.port && registered.baseUrl === record.baseUrl) {
+    if (!isPidRunning(registered.pid)) {
+      await unregisterSidecarForCwd(record.cwd, registered.pid);
+    } else {
+      record.pid = registered.pid;
+      return record;
+    }
+  }
+
+  const pid = await findPidByPort(record.port);
+  if (pid !== undefined) {
+    record.pid = pid;
+    await registerSidecarForCwd({
+      cwd: record.cwd,
+      pid,
+      port: record.port,
+      baseUrl: record.baseUrl,
+      startedAt: new Date().toISOString(),
+    });
+  }
+
+  return record;
+};
+
 const probePort = async (cwd: string, port: number): Promise<PortProbe> => {
   const baseUrl = buildBaseUrl(port);
   try {
@@ -272,7 +488,7 @@ const scanPorts = async (cwd: string): Promise<{ reusable?: SidecarRecord; freeP
   const selection = selectPortCandidate(probes);
   if (selection.reusable?.kind === "reusable") {
     return {
-      reusable: {
+      reusable: await hydrateRegisteredPid({
         cwd,
         port: selection.reusable.port,
         baseUrl: buildBaseUrl(selection.reusable.port),
@@ -280,7 +496,7 @@ const scanPorts = async (cwd: string): Promise<{ reusable?: SidecarRecord; freeP
         scope: selection.reusable.scope,
         stdoutTail: [],
         stderrTail: [],
-      },
+      }),
     };
   }
 
@@ -298,6 +514,8 @@ const attachExitCleanup = (record: SidecarRecord): void => {
     if (current === record) {
       sidecarsByCwd.delete(record.cwd);
     }
+
+    void unregisterSidecarForCwd(record.cwd, record.pid);
   };
 
   child.once("exit", clear);
@@ -332,7 +550,7 @@ const spawnOwnedSidecar = async (cwd: string, port: number): Promise<SidecarReco
   return record;
 };
 
-export const ensureSidecar = async (cwdInput: string): Promise<SidecarRecord> => {
+export const findRunningSidecarForCwd = async (cwdInput: string): Promise<SidecarRecord | undefined> => {
   const cwd = normalizeDir(cwdInput);
   const cached = sidecarsByCwd.get(cwd);
   if (cached && (await isHealthyRecord(cached))) {
@@ -348,6 +566,17 @@ export const ensureSidecar = async (cwdInput: string): Promise<SidecarRecord> =>
     return scanned.reusable;
   }
 
+  return undefined;
+};
+
+export const ensureSidecar = async (cwdInput: string): Promise<SidecarRecord> => {
+  const cwd = normalizeDir(cwdInput);
+  const reusable = await findRunningSidecarForCwd(cwd);
+  if (reusable) {
+    return reusable;
+  }
+
+  const scanned = await scanPorts(cwd);
   if (scanned.freePort === undefined) {
     throw new SidecarError(
       "PORT_EXHAUSTED",
@@ -365,7 +594,7 @@ export const ensureSidecar = async (cwdInput: string): Promise<SidecarRecord> =>
         try {
           return await getScope(record.baseUrl, HEALTH_TIMEOUT_MS);
         } catch {
-          await new Promise((resolveTimer) => setTimeout(resolveTimer, 100));
+          await delay(100);
         }
       }
       throw new HttpError({
@@ -384,6 +613,7 @@ export const ensureSidecar = async (cwdInput: string): Promise<SidecarRecord> =>
     }
 
     record.scope = scope;
+    await registerRuntimeSidecar(record);
     return record;
   } catch (error) {
     await stopSidecar(record);
@@ -410,8 +640,15 @@ export const stopSidecar = async (record: SidecarRecord): Promise<void> => {
     sidecarsByCwd.delete(record.cwd);
   }
 
+  if (record.pid) {
+    await unregisterSidecarForCwd(record.cwd, record.pid);
+  }
+
   const child = record.child;
   if (!record.ownedByPi || !child) {
+    if (record.pid) {
+      await terminatePid(record.pid);
+    }
     return;
   }
 
@@ -420,7 +657,7 @@ export const stopSidecar = async (record: SidecarRecord): Promise<void> => {
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
       resolveClose();
-    }, 2_000);
+    }, SHUTDOWN_TIMEOUT_MS);
 
     child.once("close", () => {
       clearTimeout(timeout);
@@ -432,18 +669,40 @@ export const stopSidecar = async (record: SidecarRecord): Promise<void> => {
 export const getSidecarRecord = (cwdInput: string): SidecarRecord | undefined =>
   sidecarsByCwd.get(normalizeDir(cwdInput));
 
-export const stopOwnedSidecarForCwd = async (
-  cwdInput: string,
-): Promise<"stopped" | "unowned" | "missing"> => {
-  const record = getSidecarRecord(cwdInput);
-  if (!record) {
-    return "missing";
+export const stopSidecarForCwd = async (cwdInput: string): Promise<"stopped" | "missing"> => {
+  const cwd = normalizeDir(cwdInput);
+  const running = await findRunningSidecarForCwd(cwd);
+  if (running && (running.ownedByPi || running.pid !== undefined)) {
+    await stopSidecar(running);
+    return "stopped";
   }
-  if (!record.ownedByPi || !record.child) {
-    return "unowned";
+  if (running) {
+    sidecarsByCwd.delete(cwd);
   }
 
-  await stopSidecar(record);
+  const registered = await getRegisteredSidecar(cwd);
+  if (!registered) {
+    return "missing";
+  }
+
+  if (!isPidRunning(registered.pid)) {
+    await unregisterSidecarForCwd(cwd, registered.pid);
+    return "missing";
+  }
+
+  try {
+    const scope = await getScope(registered.baseUrl, HEALTH_TIMEOUT_MS);
+    if (scope.dir !== cwd) {
+      return "missing";
+    }
+  } catch {
+    await unregisterSidecarForCwd(cwd, registered.pid);
+    return "missing";
+  }
+
+  sidecarsByCwd.delete(cwd);
+  await unregisterSidecarForCwd(cwd, registered.pid);
+  await terminatePid(registered.pid);
   return "stopped";
 };
 

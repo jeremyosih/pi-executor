@@ -5,12 +5,9 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import {
-  inspectExecutorMcp,
-  type ExecutorElicitationRequest,
-  type ResumeAction,
-  withExecutorMcpClient,
-} from "./mcp-client.ts";
+import type { JsonObject, JsonValue } from "./http.ts";
+import type { ResumeAction } from "./mcp-client.ts";
+import { withExecutorMcpClient } from "./mcp-client.ts";
 import {
   buildExecutorSystemPrompt,
   parseJsonContent,
@@ -18,8 +15,9 @@ import {
   type ExecuteToolDetails,
   type ExecuteToolResult,
 } from "./executor-adapter.ts";
-import type { JsonObject, JsonValue } from "./http.ts";
-import { ensureSidecar } from "./sidecar.ts";
+import { resolveExecutorEndpoint } from "./connection.ts";
+import { resolveExecutorSettings } from "./settings.ts";
+import { renderExecutorStatus, setExecutorState } from "./status.ts";
 
 const DEFAULT_EXECUTE_DESCRIPTION =
   "Execute TypeScript in a sandboxed runtime with access to configured API tools.";
@@ -107,10 +105,15 @@ const launchBrowser = async (url: string): Promise<void> => {
 };
 
 const promptForInteraction = async (
-  interaction: ExecutorElicitationRequest,
+  interaction: {
+    mode: "form" | "url";
+    message: string;
+    requestedSchema?: JsonObject;
+    url?: string;
+  },
   ctx: ExtensionContext,
 ): Promise<{ action: ResumeAction; content?: JsonObject }> => {
-  if (interaction.mode === "url") {
+  if (interaction.mode === "url" && interaction.url) {
     try {
       await launchBrowser(interaction.url);
       ctx.ui.notify(`Opened ${interaction.url}`, "info");
@@ -155,32 +158,33 @@ const promptForInteraction = async (
   };
 };
 
-type ExecutorToolset = {
-  executeDescription: string;
-  resumeDescription?: string;
-  hasResume: boolean;
-  instructions?: string;
+const connectExecutor = async (ctx: ExtensionContext) => {
+  const settings = await resolveExecutorSettings(ctx.cwd);
+  setExecutorState(ctx.cwd, { kind: "connecting", mode: settings.mode });
+  renderExecutorStatus(ctx, settings, ctx.cwd);
+
+  try {
+    const endpoint = await resolveExecutorEndpoint(ctx.cwd);
+    setExecutorState(ctx.cwd, {
+      kind: "ready",
+      mode: endpoint.mode,
+      baseUrl: endpoint.baseUrl,
+    });
+    renderExecutorStatus(ctx, settings, ctx.cwd);
+    return endpoint;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setExecutorState(ctx.cwd, { kind: "error", message });
+    renderExecutorStatus(ctx, settings, ctx.cwd);
+    throw error;
+  }
 };
 
-const loadExecutorToolset = async (baseUrl: string, hasUI: boolean): Promise<ExecutorToolset> => {
-  const inspection = await inspectExecutorMcp(baseUrl, hasUI);
-  const executeTool = inspection.tools.find((tool) => tool.name === "execute");
-  const resumeTool = inspection.tools.find((tool) => tool.name === "resume");
-
-  return {
-    executeDescription:
-      executeTool?.description ?? inspection.instructions ?? DEFAULT_EXECUTE_DESCRIPTION,
-    resumeDescription: resumeTool?.description ?? DEFAULT_RESUME_DESCRIPTION,
-    hasResume: resumeTool !== undefined,
-    instructions: inspection.instructions,
-  };
-};
-
-const buildExecuteTool = (description: string) =>
+const buildExecuteTool = () =>
   defineTool({
     name: "execute",
     label: "Execute",
-    description,
+    description: DEFAULT_EXECUTE_DESCRIPTION,
     promptSnippet: "Execute TypeScript in Executor's sandboxed runtime with configured API tools.",
     promptGuidelines: [
       "Search inside execute before calling Executor tools directly in code.",
@@ -190,32 +194,42 @@ const buildExecuteTool = (description: string) =>
       code: Type.String({ description: "JavaScript code to execute" }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
-      const sidecar = await ensureSidecar(ctx.cwd);
-      const scopeId = sidecar.scope?.id;
-      if (!scopeId) {
-        throw new Error(`Executor sidecar scope id missing for ${ctx.cwd}`);
-      }
+      const endpoint = await connectExecutor(ctx);
 
       const outcome = await withExecutorMcpClient(
-        sidecar.baseUrl,
+        endpoint.baseUrl,
         {
           hasUI: ctx.hasUI,
           onElicitation: ctx.hasUI
-            ? (interaction) => promptForInteraction(interaction, ctx)
+            ? (interaction) =>
+                promptForInteraction(
+                  interaction.mode === "url"
+                    ? {
+                        mode: "url",
+                        message: interaction.message,
+                        url: interaction.url,
+                      }
+                    : {
+                        mode: "form",
+                        message: interaction.message,
+                        requestedSchema: interaction.requestedSchema,
+                      },
+                  ctx,
+                )
             : undefined,
         },
         async (client) => client.execute(params.code),
       );
 
-      return toToolResult(outcome, { baseUrl: sidecar.baseUrl, scopeId });
+      return toToolResult(outcome, { baseUrl: endpoint.baseUrl, scopeId: endpoint.scope.id });
     },
   });
 
-const buildResumeTool = (description: string) =>
+const buildResumeTool = () =>
   defineTool({
     name: "resume",
     label: "Resume",
-    description,
+    description: DEFAULT_RESUME_DESCRIPTION,
     promptSnippet:
       "Resume a paused Executor execution after the user has completed the required interaction.",
     promptGuidelines: ["Use the exact executionId returned by execute."],
@@ -225,11 +239,10 @@ const buildResumeTool = (description: string) =>
       content: Type.Optional(jsonStringSchema),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
-      const sidecar = await ensureSidecar(ctx.cwd);
-      const scopeId = sidecar.scope?.id ?? "";
+      const endpoint = await connectExecutor(ctx);
 
       const outcome = await withExecutorMcpClient(
-        sidecar.baseUrl,
+        endpoint.baseUrl,
         { hasUI: false },
         async (client) =>
           client.resume(
@@ -240,23 +253,14 @@ const buildResumeTool = (description: string) =>
       );
 
       return toToolResult(outcome, {
-        baseUrl: sidecar.baseUrl,
-        scopeId,
+        baseUrl: endpoint.baseUrl,
+        scopeId: endpoint.scope.id,
       });
     },
   });
 
-export const loadExecutorPrompt = async (cwd: string, hasUI: boolean): Promise<string> => {
-  const sidecar = await ensureSidecar(cwd);
-
-  try {
-    const toolset = await loadExecutorToolset(sidecar.baseUrl, hasUI);
-    const description = toolset.instructions ?? toolset.executeDescription;
-    return buildExecutorSystemPrompt(description, toolset.hasResume);
-  } catch {
-    return buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, !hasUI);
-  }
-};
+export const loadExecutorPrompt = async (_cwd: string, hasUI: boolean): Promise<string> =>
+  buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, !hasUI);
 
 export const isExecutorToolDetails = (value: object | null): value is ExecuteToolDetails => {
   if (!value || !("baseUrl" in value) || !("scopeId" in value) || !("isError" in value)) {
@@ -271,23 +275,9 @@ export const isExecutorToolDetails = (value: object | null): value is ExecuteToo
 };
 
 export const createExecutorTools = async (
-  cwd: string,
+  _cwd: string,
   hasUI: boolean,
-): Promise<ToolDefinition[]> => {
-  const sidecar = await ensureSidecar(cwd);
-  const toolset = await loadExecutorToolset(sidecar.baseUrl, hasUI).catch(() => ({
-    executeDescription: DEFAULT_EXECUTE_DESCRIPTION,
-    resumeDescription: DEFAULT_RESUME_DESCRIPTION,
-    hasResume: !hasUI,
-  }));
-
-  return toolset.hasResume
-    ? [
-        buildExecuteTool(toolset.executeDescription),
-        buildResumeTool(toolset.resumeDescription ?? DEFAULT_RESUME_DESCRIPTION),
-      ]
-    : [buildExecuteTool(toolset.executeDescription)];
-};
+): Promise<ToolDefinition[]> => (hasUI ? [buildExecuteTool()] : [buildExecuteTool(), buildResumeTool()]);
 
 export const registerExecutorTools = async (
   pi: ExtensionAPI,

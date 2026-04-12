@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,16 +7,42 @@ import {
   analyzePortProbe,
   collectOwnedSidecars,
   createPackagePaths,
+  getRegisteredSidecar,
   getRuntimeBinaryFileName,
+  isPidRunning,
   isSupportedRuntimePlatform,
+  registerSidecarForCwd,
   selectPortCandidate,
   shouldBootstrapRuntime,
+  stopSidecarForCwd,
+  unregisterSidecarForCwd,
+  type RegisteredSidecar,
   type SidecarRecord,
 } from "../src/sidecar.ts";
 
 const cleanup: string[] = [];
+const originalHome = process.env.HOME;
+const originalFetch = globalThis.fetch;
+
+const setTempHome = async (): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-executor-home-"));
+  cleanup.push(dir);
+  process.env.HOME = dir;
+  return dir;
+};
+
+const createRegisteredSidecar = (overrides: Partial<RegisteredSidecar> = {}): RegisteredSidecar => ({
+  cwd: "/repo-a",
+  pid: 12345,
+  port: 4788,
+  baseUrl: "http://127.0.0.1:4788",
+  startedAt: new Date().toISOString(),
+  ...overrides,
+});
 
 afterEach(async () => {
+  globalThis.fetch = originalFetch;
+  process.env.HOME = originalHome;
   await Promise.all(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -98,5 +124,50 @@ describe("sidecar helpers", () => {
     expect(collectOwnedSidecars(records)).toHaveLength(1);
     expect(collectOwnedSidecars(records)[0]?.cwd).toBe("/repo-a");
     child.kill("SIGKILL");
+  });
+
+  test("persists sidecar registrations by cwd", async () => {
+    await setTempHome();
+    const registered = createRegisteredSidecar();
+
+    await registerSidecarForCwd(registered);
+
+    expect(await getRegisteredSidecar(registered.cwd)).toEqual(registered);
+
+    await unregisterSidecarForCwd(registered.cwd, registered.pid);
+    expect(await getRegisteredSidecar(registered.cwd)).toBeUndefined();
+  });
+
+  test("stops a registered sidecar from another session", async () => {
+    await setTempHome();
+    const child = spawn("sh", ["-c", "sleep 30"], { stdio: "ignore" });
+
+    const registered = createRegisteredSidecar({ pid: child.pid!, cwd: "/repo-cross-session" });
+    await registerSidecarForCwd(registered);
+
+    const fetchMock = mock(async () =>
+      new Response(
+        JSON.stringify({ id: "scope", name: "repo-cross-session", dir: registered.cwd }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    expect(await stopSidecarForCwd(registered.cwd)).toBe("stopped");
+    expect(isPidRunning(child.pid!)).toBe(false);
+    expect(await getRegisteredSidecar(registered.cwd)).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  test("cleans stale registry entries when the pid is gone", async () => {
+    await setTempHome();
+    const registered = createRegisteredSidecar({ cwd: "/repo-stale", pid: 999_999_999 });
+    await registerSidecarForCwd(registered);
+
+    expect(await stopSidecarForCwd(registered.cwd)).toBe("missing");
+    expect(await getRegisteredSidecar(registered.cwd)).toBeUndefined();
   });
 });
