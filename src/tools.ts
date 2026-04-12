@@ -6,8 +6,8 @@ import {
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import type { JsonObject, JsonValue } from "./http.ts";
-import type { ResumeAction } from "./mcp-client.ts";
-import { withExecutorMcpClient } from "./mcp-client.ts";
+import type { ResumeAction, ExecutorMcpInspection } from "./mcp-client.ts";
+import { inspectExecutorMcp, withExecutorMcpClient } from "./mcp-client.ts";
 import {
   buildExecutorSystemPrompt,
   parseJsonContent,
@@ -18,6 +18,7 @@ import {
 import { resolveExecutorEndpoint } from "./connection.ts";
 import { resolveExecutorSettings } from "./settings.ts";
 import { renderExecutorStatus, setExecutorState } from "./status.ts";
+import { findRunningSidecarForCwd } from "./sidecar.ts";
 
 const DEFAULT_EXECUTE_DESCRIPTION =
   "Execute TypeScript in a sandboxed runtime with access to configured API tools.";
@@ -28,6 +29,8 @@ const DEFAULT_RESUME_DESCRIPTION = [
 ].join("\n");
 
 const jsonStringSchema = Type.String({ description: "Optional JSON-encoded response content" });
+
+const inspectionCache = new Map<string, Promise<ExecutorMcpInspection | undefined>>();
 
 const isJsonObject = (value: JsonValue | undefined): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -158,6 +161,83 @@ const promptForInteraction = async (
   };
 };
 
+const buildInspectionCacheKey = (cwd: string, hasUI: boolean): string =>
+  `${cwd}:${hasUI ? "ui" : "headless"}`;
+
+const trimToUndefined = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const readInspectedToolDescription = (
+  inspection: ExecutorMcpInspection | undefined,
+  toolName: string,
+): string | undefined =>
+  trimToUndefined(inspection?.tools.find((tool) => tool.name === toolName)?.description) ??
+  (toolName === "execute" ? trimToUndefined(inspection?.instructions) : undefined);
+
+const inspectConfiguredExecutor = async (
+  cwd: string,
+  hasUI: boolean,
+): Promise<ExecutorMcpInspection | undefined> => {
+  const cacheKey = buildInspectionCacheKey(cwd, hasUI);
+  const cached = inspectionCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const inspectionPromise = (async (): Promise<ExecutorMcpInspection | undefined> => {
+    try {
+      const settings = await resolveExecutorSettings(cwd);
+
+      if (settings.mode === "remote") {
+        if (settings.remoteUrl.length === 0) {
+          return undefined;
+        }
+
+        return await inspectExecutorMcp(settings.remoteUrl, hasUI);
+      }
+
+      if (settings.autoStart) {
+        const endpoint = await resolveExecutorEndpoint(cwd);
+        return await inspectExecutorMcp(endpoint.baseUrl, hasUI);
+      }
+
+      const sidecar = await findRunningSidecarForCwd(cwd);
+      if (!sidecar) {
+        return undefined;
+      }
+
+      return await inspectExecutorMcp(sidecar.baseUrl, hasUI);
+    } catch {
+      return undefined;
+    }
+  })();
+
+  inspectionCache.set(cacheKey, inspectionPromise);
+
+  try {
+    return await inspectionPromise;
+  } catch {
+    inspectionCache.delete(cacheKey);
+    return undefined;
+  }
+};
+
+const loadExecutorDescriptions = async (
+  cwd: string,
+  hasUI: boolean,
+): Promise<{ executeDescription: string; resumeDescription: string }> => {
+  const inspection = await inspectConfiguredExecutor(cwd, hasUI);
+
+  return {
+    executeDescription:
+      readInspectedToolDescription(inspection, "execute") ?? DEFAULT_EXECUTE_DESCRIPTION,
+    resumeDescription:
+      readInspectedToolDescription(inspection, "resume") ?? DEFAULT_RESUME_DESCRIPTION,
+  };
+};
+
 const connectExecutor = async (ctx: ExtensionContext) => {
   const settings = await resolveExecutorSettings(ctx.cwd);
   setExecutorState(ctx.cwd, { kind: "connecting", mode: settings.mode });
@@ -180,11 +260,11 @@ const connectExecutor = async (ctx: ExtensionContext) => {
   }
 };
 
-const buildExecuteTool = () =>
+const buildExecuteTool = (description: string) =>
   defineTool({
     name: "execute",
     label: "Execute",
-    description: DEFAULT_EXECUTE_DESCRIPTION,
+    description,
     promptSnippet: "Execute TypeScript in Executor's sandboxed runtime with configured API tools.",
     promptGuidelines: [
       "Search inside execute before calling Executor tools directly in code.",
@@ -225,11 +305,11 @@ const buildExecuteTool = () =>
     },
   });
 
-const buildResumeTool = () =>
+const buildResumeTool = (description: string) =>
   defineTool({
     name: "resume",
     label: "Resume",
-    description: DEFAULT_RESUME_DESCRIPTION,
+    description,
     promptSnippet:
       "Resume a paused Executor execution after the user has completed the required interaction.",
     promptGuidelines: ["Use the exact executionId returned by execute."],
@@ -259,8 +339,10 @@ const buildResumeTool = () =>
     },
   });
 
-export const loadExecutorPrompt = async (_cwd: string, hasUI: boolean): Promise<string> =>
-  buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, !hasUI);
+export const loadExecutorPrompt = async (cwd: string, hasUI: boolean): Promise<string> => {
+  const { executeDescription } = await loadExecutorDescriptions(cwd, hasUI);
+  return buildExecutorSystemPrompt(executeDescription, !hasUI);
+};
 
 export const isExecutorToolDetails = (value: object | null): value is ExecuteToolDetails => {
   if (!value || !("baseUrl" in value) || !("scopeId" in value) || !("isError" in value)) {
@@ -275,10 +357,14 @@ export const isExecutorToolDetails = (value: object | null): value is ExecuteToo
 };
 
 export const createExecutorTools = async (
-  _cwd: string,
+  cwd: string,
   hasUI: boolean,
-): Promise<ToolDefinition[]> =>
-  hasUI ? [buildExecuteTool()] : [buildExecuteTool(), buildResumeTool()];
+): Promise<ToolDefinition[]> => {
+  const { executeDescription, resumeDescription } = await loadExecutorDescriptions(cwd, hasUI);
+  return hasUI
+    ? [buildExecuteTool(executeDescription)]
+    : [buildExecuteTool(executeDescription), buildResumeTool(resumeDescription)];
+};
 
 export const registerExecutorTools = async (
   pi: ExtensionAPI,

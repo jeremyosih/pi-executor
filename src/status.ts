@@ -22,6 +22,13 @@ export const clearExecutorState = (cwd: string): void => {
   statesByCwd.delete(cwd);
 };
 
+const executorReadyDot = (ctx: ExtensionContext): string => {
+  const theme = ctx.ui.theme;
+  return theme.getColorMode() === "truecolor"
+    ? "\x1b[38;2;0;255;102m●\x1b[39m"
+    : "\x1b[38;5;46m●\x1b[39m";
+};
+
 export const renderExecutorStatus = (
   ctx: ExtensionContext,
   settings: ExecutorSettings,
@@ -37,7 +44,7 @@ export const renderExecutorStatus = (
 
   switch (state.kind) {
     case "ready":
-      ctx.ui.setStatus("executor", theme.fg("success", "●") + theme.fg("dim", " executor ready"));
+      ctx.ui.setStatus("executor", executorReadyDot(ctx) + theme.fg("dim", " executor ready"));
       return;
     case "connecting":
       ctx.ui.setStatus(
