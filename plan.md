@@ -1,268 +1,232 @@
-# pi-executor MCP-parity plan
+# pi-executor plan
 
-status: completed. implemented and checked against refs on 2026-04-11.
-
+status: proposed. do not implement from memory.
 current date: 2026-04-11
 cwd: `/Users/jeremy/Developer/pi-executor`
 
 ---
 
-## goal
+## summary
 
-make Pi tool UX match Executor MCP host UX as closely as Pi allows.
+implement this:
 
-target UX:
+- static Pi wrapper over the **real Executor MCP endpoint**
+- keep **HTTP only** for sidecar bootstrap / reuse / health / scope detection
+- use **MCP** for real Executor behavior:
+  - `execute`
+  - `resume` only when server exposes it
+  - server instructions / execute guidance
+  - managed elicitation
+  - result semantics
+- add **one stable MCP client dep max**, only if stable line supports needed features
+- no generic MCP mirror
+- no hand-rolled MCP protocol client
 
-- model sees `execute` as the primary tool
-- model sees `resume` only when inline elicitation is not available
-- `execute` carries the same workflow guidance as MCP host
-- result text / structured payloads match MCP host formatting
-- paused / resumed behavior matches MCP host semantics
-- helper discovery remains available to code running inside Executor, not as separate Pi-facing tools
+why:
 
-non-goal:
+- 1 real capability only
+- drift matters more than flexibility
+- current HTTP path duplicates MCP host semantics
+- MCP host already owns behavior we want
 
-- no code changes in this plan
-- no assumptions without refs
+fallback:
+
+- if stable MCP client cannot do Streamable HTTP + elicitation cleanly, stop, document blocker, keep current HTTP path
 
 ---
 
-## read this first. mandatory
+## guidelines. hard rules
 
-fresh agent should read these before touching code.
+- trust code. not memory. not this plan.
+- before each phase, re-read listed refs.
+- prefer smallest diff that removes drift.
+- keep Pi surface static:
+  - `execute`
+  - `resume` only if needed
+- do **not** add helper Pi-facing tools.
+- do **not** implement generic tool mirroring.
+- do **not** hand-roll MCP transport unless blocked by dependency reality.
+- keep sidecar lifecycle on HTTP. do not move it to MCP.
+- source prompt/instructions from MCP host when possible. do not rebuild if server already knows.
+- use Bun commands only.
+- after each phase: run tests + typecheck.
+- if docs and code disagree, trust local code + chosen package version.
+- for MCP SDK choice: prefer stable v1.x. docs say v2 is pre-alpha.
 
-### current Pi extension
+---
 
-- `src/index.ts` — extension entry. current registration point for tools + commands.
-- `src/tools.ts` — current Pi-facing tool surface. main delta vs MCP.
-- `src/http.ts` — current HTTP transport wrapper over local Executor `/api`.
-- `src/sidecar.ts` — sidecar bootstrap/reuse/ownership. should mostly stay boundary layer.
-- `src/commands.ts` — human/admin slash commands. not model-facing parity target.
-- `README.md` — current shipped UX docs.
-- `test/executor-tools.test.ts` — current tool helper tests.
-- `test/executor-http.test.ts` — current HTTP wrapper tests.
-- `test/executor-commands.test.ts` — current command tests.
-- `test/executor-sidecar.test.ts` — current sidecar tests.
+## required reading. fresh-agent order
 
-### shared Executor core
+read in this order before editing.
 
-- `docs/executor/apps/local/src/server/executor.ts` — builds shared `createExecutor(...)` object from plugins + storage.
-- `docs/executor/apps/local/src/server/main.ts` — wires one shared `executor` + one shared `engine` into both HTTP + MCP adapters.
-- `docs/executor/packages/core/execution/src/engine.ts` — shared execute/pause/resume formatting + helper dispatch.
-- `docs/executor/packages/core/execution/src/description.ts` — dynamic MCP execute guidance.
-- `docs/executor/packages/core/execution/src/tool-invoker.ts` — shared SDK-backed search/describe/source-list/tool invoke behavior.
+### A. current repo. must read
 
-### HTTP adapter
+1. `package.json`
+2. `src/index.ts`
+3. `src/tools.ts`
+4. `src/executor-adapter.ts`
+5. `src/http.ts`
+6. `src/sidecar.ts`
+7. `src/commands.ts`
+8. `README.md`
+9. `test/executor-tools.test.ts`
+10. `test/executor-http.test.ts`
+11. `test/executor-sidecar.test.ts`
+12. `test/executor-commands.test.ts`
 
-- `docs/executor/packages/core/api/src/api.ts` — core HTTP groups.
-- `docs/executor/packages/core/api/src/services.ts` — `ExecutorService` + `ExecutionEngineService`.
-- `docs/executor/packages/core/api/src/handlers/executions.ts` — HTTP execute/resume adapter over shared engine.
-- `docs/executor/packages/core/api/src/handlers/tools.ts` — HTTP tools list/schema adapter over shared executor.
-- `docs/executor/packages/core/api/src/handlers/sources.ts` — HTTP sources list/tools adapter over shared executor.
-- `docs/executor/packages/core/api/src/handlers/scope.ts` — HTTP scope info adapter.
-- `docs/executor/apps/local/src/serve.ts` — mounts `/api` and `/mcp` in local server.
+### B. executor upstream refs. must read
 
-### MCP adapter
+1. `docs/executor/apps/local/src/serve.ts`
+2. `docs/executor/apps/local/src/server/main.ts`
+3. `docs/executor/apps/local/src/server/mcp.ts`
+4. `docs/executor/packages/hosts/mcp/src/server.ts`
+5. `docs/executor/packages/hosts/mcp/src/server.test.ts`
+6. `docs/executor/packages/core/execution/src/engine.ts`
+7. `docs/executor/packages/core/execution/src/description.ts`
+8. `docs/executor/packages/core/api/src/handlers/executions.ts`
 
-- `docs/executor/packages/hosts/mcp/src/server.ts` — MCP execute/resume tool registration. primary parity source.
-- `docs/executor/packages/hosts/mcp/src/server.test.ts` — parity behavior source of truth.
-- `docs/executor/packages/hosts/mcp/src/stdio-integration.test.ts` — end-to-end MCP execute behavior.
-- `docs/executor/apps/local/src/server/mcp.ts` — mounts MCP host over transport.
+### C. MCP client refs. must read
 
-### Pi extension constraints
+1. `docs/typescript-sdk/README.md`
+2. `docs/typescript-sdk/docs/client.md`
+3. `docs/typescript-sdk/examples/client/src/simpleStreamableHttp.ts`
+4. `docs/typescript-sdk/examples/client/src/elicitationUrlExample.ts`
+5. `docs/typescript-sdk/packages/client/src/client/streamableHttp.ts`
 
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts` — tool definition shape, `before_agent_start.systemPrompt`, UI types.
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js` — how prompt snippets/guidelines are incorporated into system prompt.
-- `node_modules/@mariozechner/pi-coding-agent/docs/extensions.md` — UI primitives + extension lifecycle docs.
-- `node_modules/@mariozechner/pi-coding-agent/examples/extensions/dynamic-tools.ts` — dynamic tool registration example.
+### D. Pi extension refs. must read
+
+1. `/Users/jeremy/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`
+2. `/Users/jeremy/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/examples/extensions/hello.ts`
+3. `/Users/jeremy/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/examples/extensions/with-deps/index.ts`
 
 rule:
 
-- if a phase mentions a ref, re-read it right before implementation. do not rely on this plan’s summary alone.
+- before touching a file, re-read that file + its upstream ref.
+- do not trust snippets below as sufficient.
 
 ---
 
-## truth. source-backed
+## truth. source-backed. current state
 
-### 1. MCP host exposes only 2 tools: `execute`, `resume`
+### 1. Pi currently uses HTTP and rebuilds MCP-ish behavior in repo code
 
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
+ref: `src/index.ts`
 
 ```ts
-const executeTool = server.registerTool("execute", ...)
-const resumeTool = server.registerTool("resume", ...)
+await registerExecutorTools(pi, ctx.cwd, ctx.hasUI)
+systemPrompt: `${event.systemPrompt}\n\n${await loadExecutorPrompt(ctx.cwd, ctx.hasUI)}`
 ```
-
-current Pi extension exposes 5 tools:
 
 ref: `src/tools.ts`
 
 ```ts
-export const executorTools = [
-  executeTool,
-  resumeTool,
-  searchTool,
-  describeTool,
-  listSourcesTool,
-] satisfies ToolDefinition[];
+const outcome = await runManagedExecution(
+  {
+    execute: (code) => execute(sidecar.baseUrl, code),
+    resume: (executionId, payload) => resume(sidecar.baseUrl, executionId, payload),
+  },
+  params.code,
+  async (interaction) => promptForInteraction(interaction, ctx),
+)
 ```
 
-gap:
-
-- Pi surface is wider than MCP surface
-- model has to choose between helper tools + execute, unlike MCP
-
----
-
-### 2. MCP `execute` tool description is dynamic. built from current sources + namespaces
-
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
-
 ```ts
-const description = await engine.getDescription();
-...
-description,
+return hasUI ? [buildExecuteTool(description)] : [buildExecuteTool(description), buildResumeTool()]
 ```
 
-ref: `docs/executor/packages/core/execution/src/description.ts`
+meaning:
+
+- Pi code currently decides tool visibility
+- Pi code currently loops paused/resume interactions itself
+- Pi code currently rebuilds prompt guidance itself
+
+### 2. current HTTP adapter is the source of that drift
+
+ref: `src/http.ts`
 
 ```ts
-const lines: string[] = [
-  "Execute TypeScript in a sandboxed runtime with access to configured API tools.",
-  ...'1. `const matches = await tools.search({ query: "<intent + key nouns>", limit: 12 });`',
-  ..."5. Use `tools.executor.sources.list()` when you need configured source inventory.",
-  "6. Call the tool: `const result = await tools.<path>(input);`",
-];
+export const execute = async (baseUrl: string, code: string): Promise<ExecuteResponse> =>
+  fetchJson(baseUrl, "/api/executions", parseExecuteResponse, {
+    method: "POST",
+    body: { code },
+  })
 ```
 
-and it appends live namespaces:
+```ts
+export const resume = async (
+  baseUrl: string,
+  executionId: string,
+  payload: ResumePayload,
+): Promise<ResumeResponse> =>
+  fetchJson(baseUrl, `/api/executions/${encodeURIComponent(executionId)}/resume`, ...)
+```
+
+meaning:
+
+- current execute path is HTTP `/api/executions`
+- current resume path is HTTP `/api/executions/:id/resume`
+- current code is not calling the real MCP host
+
+### 3. local Executor already exposes `/mcp`
+
+ref: `docs/executor/apps/local/src/serve.ts`
 
 ```ts
-for (const ns of sorted) {
-  const source = sources.find((s) => s.id === ns);
-  lines.push(`- \`${ns}\`${label !== ns ? ` — ${label}` : ""}`);
+if (url.pathname.startsWith("/mcp")) {
+  return handlers.mcp.handleRequest(req)
+}
+
+if (url.pathname.startsWith("/api/") || url.pathname === "/api") {
+  url.pathname = url.pathname.slice("/api".length) || "/"
+  return handlers.api.handler(new Request(url, req))
 }
 ```
 
-current Pi `executor_execute` description is static + thin.
+meaning:
 
-ref: `src/tools.ts`
+- we do not need to invent an MCP server
+- same local sidecar already serves `/api` and `/mcp`
 
-```ts
-const executeTool = defineTool({
-  name: "executor_execute",
-  description: "Execute JavaScript code in the local Executor sidecar for the current working directory.",
-  promptSnippet: "Execute JavaScript in the local Executor sidecar for the current working directory.",
-  promptGuidelines: ["Use this when you need Executor's runtime instead of Pi's built-in tools."],
-```
-
-gap:
-
-- no live namespace inventory
-- no MCP workflow guidance
-- no lazy-proxy rules
-- no “don’t use fetch / use search first” guidance
-
----
-
-### 3. MCP hides `resume` when client supports managed elicitation
+### 4. MCP host already owns the behavior we want
 
 ref: `docs/executor/packages/hosts/mcp/src/server.ts`
 
 ```ts
-const syncToolAvailability = () => {
-  executeTool.enable();
-  if (supportsManagedElicitation(server)) {
-    resumeTool.disable();
-  } else {
-    resumeTool.enable();
-  }
-};
+const description = await engine.getDescription()
 ```
-
-tests prove this.
-
-ref: `docs/executor/packages/hosts/mcp/src/server.test.ts`
-
-```ts
-expect(names).toContain("execute");
-expect(names).not.toContain("resume");
-```
-
-current Pi always registers `executor_resume`.
-
-ref: `src/tools.ts`
-
-```ts
-export const executorTools = [
-  executeTool,
-  resumeTool,
-  ...
-]
-```
-
-gap:
-
-- Pi does not mirror MCP capability-based visibility
-
-note:
-
-- Pi extension API has static `registerTool()`.
-- tool definitions have static `description`, `promptSnippet`, `promptGuidelines`.
-
-ref: `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`
-
-```ts
-export interface ToolDefinition {
-  name: string;
-  label: string;
-  description: string;
-  promptSnippet?: string;
-  promptGuidelines?: string[];
-```
-
-so exact MCP-style tool enable/disable must be mapped to Pi session/runtime behavior, not copied 1:1.
-
----
-
-### 4. MCP uses managed elicitation when client supports it; pause/resume only when not supported
-
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
 
 ```ts
 if (supportsManagedElicitation(server)) {
   const result = await engine.execute(code, {
     onElicitation: makeMcpElicitationHandler(server),
-  });
-  return toMcpResult(formatExecuteResult(result));
+  })
+  return toMcpResult(formatExecuteResult(result))
 }
 
-const outcome = await engine.executeWithPause(code);
+const outcome = await engine.executeWithPause(code)
 return outcome.status === "completed"
   ? toMcpResult(formatExecuteResult(outcome.result))
-  : toMcpPausedResult(formatPausedExecution(outcome.execution));
+  : toMcpPausedResult(formatPausedExecution(outcome.execution))
 ```
 
-current Pi wrapper always uses HTTP `/api/executions` and exposes paused state back to the model.
-
-ref: `src/tools.ts`
-
 ```ts
-const result = await execute(sidecar.baseUrl, params.code);
-return {
-  content: [{ type: "text", text: jsonIndent(result) }],
-  details: { ... }
+const syncToolAvailability = () => {
+  executeTool.enable()
+  if (supportsManagedElicitation(server)) {
+    resumeTool.disable()
+  } else {
+    resumeTool.enable()
+  }
 }
 ```
 
-gap:
+meaning:
 
-- no inline Pi-side elicitation bridge
-- paused interaction leaks back to model even when human UI exists
+- description already lives upstream
+- managed elicitation already lives upstream
+- resume visibility already lives upstream
 
----
-
-### 5. MCP formats result text with `formatExecuteResult()` and paused text with `formatPausedExecution()`
+### 5. engine already owns result formatting
 
 ref: `docs/executor/packages/core/execution/src/engine.ts`
 
@@ -273,7 +237,7 @@ export const formatExecuteResult = (result: ExecuteResult) => {
     text: parts.join("\n"),
     structured: { status: "completed", result: result.result ?? null, logs: result.logs ?? [] },
     isError: false,
-  };
+  }
 }
 ```
 
@@ -287,727 +251,454 @@ export const formatPausedExecution = (paused: PausedExecution) => {
       executionId: paused.id,
       interaction: { ... }
     },
-  };
+  }
 }
 ```
 
-MCP tool result then becomes:
+meaning:
 
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
+- do not recreate this formatting in Pi if MCP already returns it
 
-```ts
-const toMcpResult = (formatted) => ({
-  content: [{ type: "text", text: formatted.text }],
-  structuredContent: formatted.structured,
-  isError: formatted.isError || undefined,
-});
-```
-
-current Pi returns raw HTTP envelope JSON:
-
-ref: `src/tools.ts`
-
-```ts
-content: [{ type: "text", text: jsonIndent(result) }];
-```
-
-and current HTTP shape is:
-
-ref: `src/http.ts`
-
-```ts
-export type ExecuteCompleted = {
-  status: "completed";
-  text: string;
-  structured: JsonValue;
-  isError: boolean;
-};
-```
-
-gap:
-
-- Pi text UX differs from MCP text UX
-- Pi structured details differ from MCP `structuredContent`
-- user/model sees transport envelope, not final MCP-shaped result
-
----
-
-### 6. MCP `resume` input is tolerant. invalid / array JSON does not throw.
-
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
-
-```ts
-const parseJsonContent = (raw: string): Record<string, unknown> | undefined => {
-  if (raw === "{}") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : undefined;
-};
-```
-
-tests prove this:
+### 6. upstream tests prove MCP visibility + elicitation behavior
 
 ref: `docs/executor/packages/hosts/mcp/src/server.test.ts`
 
 ```ts
-it("invalid JSON is handled gracefully (not thrown)", async () => {
+const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities })
 ```
 
-current Pi resume parsing throws hard on invalid JSON / non-object JSON.
-
-ref: `src/tools.ts`
-
 ```ts
-const parseJsonObjectString = (text: string): JsonObject => {
-  const parsed = JSON.parse(text) as JsonValue;
-  if (!isJsonObject(parsed)) {
-    throw new Error("contentJson must parse to a JSON object");
-  }
-  return parsed;
-};
+client.setRequestHandler(ElicitRequestSchema, async () => ({
+  action: "accept" as const,
+  content: { approved: true },
+}))
 ```
 
-gap:
-
-- Pi resume semantics differ from MCP resume semantics
-
----
-
-### 7. MCP workflow keeps search/describe/source-list _inside_ execute runtime, not as top-level model-facing tools
-
-ref: `docs/executor/packages/core/execution/src/engine.ts`
-
 ```ts
-if (path === "search") { ... }
-if (path === "executor.sources.list") { ... }
-if (path === "describe.tool") { ... }
+const { tools } = await client.listTools()
+expect(names).toContain("execute")
+expect(names).not.toContain("resume")
 ```
 
-this is how code running _inside_ `execute` discovers tools.
+meaning:
 
-current Pi lifts those helpers into first-class tools:
+- actual MCP client capability negotiation controls `resume`
+- actual MCP client handler path controls elicitation
+- this is the parity source. not our local HTTP shim.
 
-ref: `src/tools.ts`
+### 7. MCP TS SDK supports what we need. but version choice matters
 
-```ts
-name: "executor_search";
-name: "executor_describe";
-name: "executor_list_sources";
+ref: `docs/typescript-sdk/README.md`
+
+```md
+main branch contains v2 of the SDK (currently in development, pre-alpha)
+v1.x remains the recommended version for production use
 ```
 
-gap:
-
-- model has a different interaction model than MCP
-- agent can bypass the intended “write code in execute” path
-
----
-
-### 8. Pi can do dynamic-ish behavior, but via different primitives than MCP
-
-Pi facts:
-
-- tools can be registered during `session_start`
-- tools have static metadata once registered
-- extensions can inject/replace system prompt per turn via `before_agent_start`
-- tools can use UI when `ctx.hasUI`
-
-refs:
-
-`node_modules/@mariozechner/pi-coding-agent/examples/extensions/dynamic-tools.ts`
+ref: `docs/typescript-sdk/docs/client.md`
 
 ```ts
-pi.on("session_start", (_event, ctx) => {
-  registerEchoTool("echo_session", ...)
+const client = new Client({ name: 'my-client', version: '1.0.0' })
+const transport = new StreamableHTTPClientTransport(new URL('http://localhost:3000/mcp'))
+await client.connect(transport)
+```
+
+```ts
+client.setRequestHandler('elicitation/create', async request => {
+  return { action: 'accept', content: { confirm: true } }
 })
 ```
 
-`node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`
+meaning:
 
-```ts
-export interface BeforeAgentStartEventResult {
-  systemPrompt?: string;
+- Streamable HTTP client exists
+- elicitation handler exists
+- must pin to stable line if possible
+
+### 8. repo currently has no MCP client dependency
+
+ref: `package.json`
+
+```json
+"dependencies": {
+  "@executor-js/sdk": "^0.0.1-beta.2",
+  "executor": "^1.4.4"
 }
 ```
 
-`node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`
+meaning:
 
-```md
-ctx.hasUI
-ctx.ui.confirm(...)
-ctx.ui.input(...)
-ctx.ui.editor(...)
-```
-
-constraint:
-
-- MCP client-capability negotiation != Pi extension runtime model
-- exact parity must be semantic parity, not protocol parity
+- any MCP client dep decision is explicit work
+- dependency count must be justified
 
 ---
 
-## exact parity target. practical
+## target architecture
 
-### model-facing tools
+### keep
 
-target:
+- `src/sidecar.ts` as sidecar lifecycle boundary
+- HTTP `GET /api/scope` for health / cwd validation
+- `src/commands.ts` for `/executor-web`, `/executor-start`, `/executor-stop`
 
-- `execute`
-- `resume` only in no-UI / fallback mode
+### replace
 
-not target:
+replace Pi-side parity logic with a tiny MCP bridge:
 
-- `executor_search`
-- `executor_describe`
-- `executor_list_sources`
+- new `src/mcp-client.ts` or equivalent
+- static Pi tool wrapper in `src/tools.ts`
+- prompt/instructions loaded from MCP host, not rebuilt locally if avoidable
+- execute/resume routed through MCP, not `/api/executions`
 
-these helper ops stay available _inside Executor code_ via `tools.search`, `tools.describe.tool`, `tools.executor.sources.list`.
+### do not build
 
-### execution UX
-
-target:
-
-- `execute` text/structured result should match MCP host output
-- when Pi has UI, `execute` should bridge elicitation inline, then continue execution, like MCP managed elicitation
-- when Pi has no usable UI, `execute` should return paused interaction text/structured payload, and `resume` stays available
-
-### prompt UX
-
-target:
-
-- inject the same workflow guidance MCP uses
-- inject live namespace list from current sources
-- keep tool descriptions minimal but aligned
+- generic mirror of arbitrary MCP tools
+- custom JSON-RPC/MCP transport from scratch
+- extra Pi-facing helper tools
 
 ---
 
-## reuse directly
+## detailed todo list. phases + tasks
 
-keep reusing:
+check box only when code + tests are done.
 
-1. sidecar + local HTTP transport
-   - already works
-   - avoids embedding Bun/local runtime in Pi extension
+don't skip phases.
 
-2. HTTP `/api/executions` and `/api/executions/:id/resume`
-   - they already use shared engine formatting
-   - good enough transport-wise
+---
 
-3. HTTP tools/sources/schema endpoints
-   - useful for building live prompt/namespace data
-   - useful as fallback/debug paths
+## phase 0 — truth pass. dependency gate. no code yet
 
-refs:
+goal:
 
-- `src/http.ts`
-- `docs/executor/packages/core/api/src/handlers/executions.ts`
-- `docs/executor/packages/core/api/src/handlers/tools.ts`
-- `docs/executor/packages/core/api/src/handlers/sources.ts`
-- `docs/executor/apps/local/src/server/main.ts`
+- verify recommendation is implementable with low drift + low dep count
+- choose exact MCP client package/version from evidence
 
-## mimic, not directly reuse
+### tasks
 
-we should mimic MCP behavior for:
+- [ ] re-read: `docs/typescript-sdk/README.md`, `docs/typescript-sdk/docs/client.md`, `docs/typescript-sdk/examples/client/src/simpleStreamableHttp.ts`, `docs/typescript-sdk/examples/client/src/elicitationUrlExample.ts`
+- [ ] verify exact package name + API for the **stable** client line. do not assume v2 docs apply verbatim to the chosen stable package.
+- [ ] verify chosen stable package supports all required features:
+  - Streamable HTTP transport
+  - `connect`
+  - `listTools`
+  - `callTool`
+  - server instructions retrieval
+  - elicitation request handler
+  - explicit close / session termination if needed
+- [ ] compare chosen client API against upstream Executor host tests in `docs/executor/packages/hosts/mcp/src/server.test.ts`
+- [ ] decide exact dependency strategy:
+  - preferred: one stable MCP client package
+  - rejected: pre-alpha v2 only
+  - rejected: hand-rolled client
+- [ ] record the chosen package + version + why in this plan before implementation begins
 
-1. tool surface
-   - `execute`
-   - `resume` only when fallback needed
+### done when
 
-2. dynamic execute guidance
-   - same workflow/rules as MCP `engine.getDescription()`
+- [ ] exact MCP client dep chosen from stable line
+- [ ] or blocker documented clearly: stable client missing required features
 
-3. managed elicitation
-   - if Pi has UI, do inline human interaction
-   - don’t force model-visible pause/resume unless needed
+### stop condition
 
-4. result UX
-   - text + structured output should look like MCP results, not raw HTTP envelopes
+- [ ] if no viable stable client exists, stop. do not start implementation. update plan to fallback HTTP-only path instead.
 
-refs:
+---
 
-- `docs/executor/packages/hosts/mcp/src/server.ts`
-- `docs/executor/packages/core/execution/src/description.ts`
-- `docs/executor/packages/core/execution/src/engine.ts`
-- `docs/executor/packages/hosts/mcp/src/server.test.ts`
+## phase 1 — map current code to target change set
 
-## likely implementation shape
+goal:
 
-keep current sidecar + HTTP transport. do not embed Executor runtime directly.
+- identify exactly what code stays, what code shrinks, what code dies
 
-why:
+### tasks
 
-- existing sidecar/http works
-- local Executor server/runtime is Bun-backed; embedding it in Pi extension is the wrong boundary
-- MCP parity issue is tool UX + result shaping, not sidecar transport itself
+- [ ] re-read: `src/index.ts`, `src/tools.ts`, `src/executor-adapter.ts`, `src/http.ts`, `src/sidecar.ts`, `src/commands.ts`
+- [ ] mark `src/sidecar.ts` as keep. only sidecar lifecycle / scope health.
+- [ ] mark `src/commands.ts` as keep. maybe no code changes except imports/types if needed.
+- [ ] mark `src/tools.ts` as primary integration rewrite target.
+- [ ] mark `src/executor-adapter.ts` as likely shrink/delete target. identify which helpers still matter after MCP path exists.
+- [ ] mark `src/http.ts` execution/list wrappers as likely delete target. keep only what sidecar lifecycle still needs.
+- [ ] map current tests to future state:
+  - `test/executor-tools.test.ts` will change a lot
+  - `test/executor-http.test.ts` will likely shrink
+  - `test/executor-sidecar.test.ts` should mostly stay
+  - `test/executor-commands.test.ts` should mostly stay
 
-proof refs:
+### done when
 
-- `docs/executor/apps/local/src/server/executor.ts`
-- `docs/executor/apps/cli/src/main.ts`
+- [ ] file-by-file keep/rewrite/delete decision written down
+- [ ] no ambiguity left about where MCP logic will live
 
-probable file map after migration:
+---
 
-```text
-src/
-  index.ts       # register only MCP-parity tools + admin slash commands
-  sidecar.ts     # mostly unchanged; maybe small helpers
-  http.ts        # keep execute/resume + scope/tools/sources reads
-  tools.ts       # major rewrite around execute/resume parity
-  commands.ts    # keep admin commands only
-```
+## phase 2 — add tiny MCP bridge module
 
-optional add only if pressure forces it:
+goal:
 
-```text
-src/mcp-parity.ts   # description builder + paused/result formatting + elicitation bridge
-```
+- isolate all MCP client lifecycle in one new module
+- keep rest of repo dumb
 
-### current implementation entry points
+### create
 
-fresh agent should start in these exact locations when implementing:
+- [ ] add `src/mcp-client.ts`
 
-- `src/index.ts`
-  - current extension bootstrap
-  - current place where tools + admin commands are registered
-- `src/tools.ts`
-  - current Pi tool definitions
-  - current helper-tool exposure that likely must be collapsed
-  - current raw execute/resume result shaping that must change
-- `src/http.ts`
-  - current transport contracts to keep reusing
+### required surface
+
+- [ ] one small constructor/helper around `${baseUrl}/mcp`
+- [ ] one way to open a client with capabilities based on Pi session
+- [ ] one way to close client/transport cleanly
+- [ ] one function to read server instructions
+- [ ] one function to list exposed tools
+- [ ] one function to call `execute`
+- [ ] one function to call `resume` when needed
+- [ ] one place to bridge server `elicitation/create` requests into caller callbacks
+
+### constraints
+
+- [ ] do **not** expose generic mirror abstractions
+- [ ] do **not** let MCP SDK details leak all over `src/tools.ts`
+- [ ] prefer `withExecutorMcpClient(...)` / `connectExecutorMcp(...)` style helper over persistent global singleton unless evidence forces persistence
+- [ ] if client supports session termination, use it on close when appropriate
+- [ ] do not put sidecar boot logic here
+
+### read before coding
+
+- [ ] `docs/typescript-sdk/docs/client.md`
+- [ ] `docs/typescript-sdk/packages/client/src/client/streamableHttp.ts`
+- [ ] `docs/executor/apps/local/src/server/mcp.ts`
+- [ ] `docs/executor/packages/hosts/mcp/src/server.ts`
+
+### done when
+
+- [ ] MCP bridge can connect to `/mcp`
+- [ ] MCP bridge can fetch instructions
+- [ ] MCP bridge can `listTools`
+- [ ] MCP bridge can `callTool('execute', ...)`
+- [ ] MCP bridge can accept elicitation callback wiring
+- [ ] MCP bridge cleans up transport/client reliably
+
+---
+
+## phase 3 — switch prompt/instruction loading to MCP
+
+goal:
+
+- stop rebuilding execute guidance locally when server can provide it
+
+### tasks
+
+- [ ] re-read: `src/index.ts`, `src/tools.ts`, `src/executor-adapter.ts`, `docs/executor/packages/hosts/mcp/src/server.ts`, `docs/executor/packages/core/execution/src/description.ts`
+- [ ] replace `loadExecuteDescription(...)` / local description synthesis path with MCP-sourced instructions or MCP tool description, whichever is actually available from the chosen client API
+- [ ] keep fallback text only as a last-resort guard if MCP instruction fetch fails
+- [ ] keep prompt injection in `src/index.ts`, but make source of truth MCP-backed
+- [ ] verify prompt text still tells model to use `execute` correctly
+
+### explicit delete/shrink targets
+
+- [ ] remove or reduce `buildExecuteDescriptionFromData(...)` if no longer needed
+- [ ] remove or reduce `loadExecuteDescription(...)` if no longer needed
+- [ ] remove duplicated namespace-description logic if MCP already supplies it
+
+### done when
+
+- [ ] Pi prompt guidance comes from real MCP host behavior
+- [ ] local execute-guidance synthesis is gone or fallback-only
+
+---
+
+## phase 4 — switch tool execution path from HTTP to MCP
+
+goal:
+
+- Pi `execute` and `resume` should call the real MCP host
+
+### tasks
+
+- [ ] re-read: `src/tools.ts`, `src/http.ts`, `docs/executor/packages/hosts/mcp/src/server.ts`, `docs/executor/packages/core/execution/src/engine.ts`
+- [ ] in `src/tools.ts`, keep static Pi tool registration. do not mirror arbitrary server tools.
+- [ ] map Pi `execute` tool to MCP `execute`
+- [ ] map Pi `resume` tool to MCP `resume` only when fallback path is needed
+- [ ] preserve Pi `details` payload shape or replace it deliberately with a simpler MCP-backed shape. if changed, update `src/index.ts` tool_result logic accordingly.
+- [ ] preserve correct `isError` propagation from MCP result into Pi tool result
+- [ ] preserve baseUrl/scopeId metadata if still useful for UX/debugging
+
+### tool surface rules
+
+- [ ] `execute` always present
+- [ ] `resume` presence must come from reality, not hardcoded `hasUI ? ... : ...` alone
+- [ ] prefer asking MCP tool list what exists after client initializes with chosen capabilities
+
+### done when
+
+- [ ] no execution path in `src/tools.ts` calls HTTP `/api/executions`
+- [ ] no resume path in `src/tools.ts` calls HTTP `/api/executions/:id/resume`
+- [ ] actual Pi-facing behavior follows MCP server tool list + MCP call results
+
+---
+
+## phase 5 — map MCP elicitation into Pi UI
+
+goal:
+
+- inline interaction in Pi UI when possible
+- headless fallback still works
+
+### tasks
+
+- [ ] re-read: `src/tools.ts`, `/Users/jeremy/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`, `docs/typescript-sdk/docs/client.md`, `docs/typescript-sdk/examples/client/src/elicitationUrlExample.ts`, `docs/executor/packages/hosts/mcp/src/server.test.ts`
+- [ ] implement form elicitation bridge using Pi UI primitives
+- [ ] implement URL elicitation bridge:
+  - open browser if possible
+  - notify user if launcher fails
+  - collect accept / decline / cancel
+- [ ] preserve current good UX behavior from `promptForInteraction(...)` where useful; move it to MCP-backed callback path instead of HTTP pause/resume loop
+- [ ] keep headless / no-UI path explicit:
+  - client capabilities should not advertise managed elicitation
+  - MCP server should then expose `resume`
+  - Pi should allow `resume` tool in that case
+- [ ] verify `resume` uses exact execution id returned by paused MCP result
+
+### done when
+
+- [ ] UI session completes managed elicitation inline through MCP callback path
+- [ ] no-UI session gets explicit paused result + usable `resume`
+- [ ] Pi no longer manually loops HTTP pause/resume for managed interaction
+
+---
+
+## phase 6 — delete drift-prone HTTP parity code
+
+goal:
+
+- remove code that existed only to imitate MCP
+
+### tasks
+
+- [ ] re-read: `src/executor-adapter.ts`, `src/http.ts`, `test/executor-tools.test.ts`, `test/executor-http.test.ts`
+- [ ] delete unused HTTP execute/resume/listTools/schema/source wrappers from `src/http.ts` if sidecar lifecycle no longer needs them
+- [ ] keep `getScope` + shared HTTP helpers only if still needed by `src/sidecar.ts`
+- [ ] delete unused normalization helpers in `src/executor-adapter.ts`
+- [ ] delete unused managed-execution loop helpers in `src/executor-adapter.ts`
+- [ ] rename/split modules if file names no longer match responsibilities
+
+### done when
+
+- [ ] repo no longer contains duplicate MCP emulation that serves no purpose
+- [ ] HTTP boundary is clearly sidecar-lifecycle-only
+- [ ] MCP boundary is clearly execution-behavior-only
+
+---
+
+## phase 7 — tests. replace old parity tests with MCP-backed tests
+
+goal:
+
+- prove behavior from code, not hope
+
+### test work
+
+- [ ] re-read: `test/executor-tools.test.ts`, `test/executor-http.test.ts`, `test/executor-sidecar.test.ts`, `test/executor-commands.test.ts`, `docs/executor/packages/hosts/mcp/src/server.test.ts`
+- [ ] add new MCP bridge tests. likely new file: `test/executor-mcp-client.test.ts`
+- [ ] test chosen client/bridge against a tiny Streamable HTTP MCP test server. prefer SDK-backed fixture. do not make production code depend on `docs/`.
+- [ ] assert prompt/instructions load through MCP path
+- [ ] assert `execute` call goes through MCP path
+- [ ] assert UI capability path hides `resume` if MCP server hides it
+- [ ] assert headless capability path exposes/uses `resume`
+- [ ] assert form elicitation maps to Pi callback path
+- [ ] assert URL elicitation maps to Pi callback path
+- [ ] assert MCP error `isError` propagates to Pi tool_result
+- [ ] update/remove old HTTP parity tests that no longer reflect architecture
+- [ ] keep sidecar tests green
+- [ ] keep command tests green
+
+### commands to run
+
+- [ ] `bun test`
+- [ ] `bun run typecheck`
+
+### done when
+
+- [ ] tests prove MCP-backed path
+- [ ] stale HTTP-parity tests removed or rewritten
+- [ ] no red tests
+- [ ] no TS errors
+
+---
+
+## phase 8 — docs cleanup
+
+goal:
+
+- shipped docs match shipped architecture
+
+### tasks
+
+- [ ] update `README.md` runtime model bullets:
+  - say sidecar lifecycle uses HTTP `/api/scope`
+  - say execute behavior uses MCP `/mcp`
+  - remove wording that implies local HTTP execution path if that is no longer true
+- [ ] update install/dev docs if new MCP client dep added
+- [ ] fix any stale script names or commands in `README.md` while touching docs
+- [ ] document `resume` behavior precisely: visible only when managed elicitation is unavailable
+
+### done when
+
+- [ ] README matches actual architecture
+- [ ] no stale HTTP-only claims remain
+
+---
+
+## final acceptance checklist
+
+all must be true.
+
+- [ ] sidecar boot/reuse still works via `src/sidecar.ts`
+- [ ] Pi tool surface stays minimal: `execute`, plus `resume` only when needed
+- [ ] prompt/instructions come from MCP host or MCP-exposed metadata, not hand-built local parity code
+- [ ] execute path uses `/mcp`, not `/api/executions`
+- [ ] inline elicitation works in UI sessions
+- [ ] headless fallback works with `resume`
+- [ ] no generic MCP mirror exists
+- [ ] no hand-rolled MCP protocol client exists
+- [ ] dependency count increased only if stable MCP client was required
+- [ ] tests + typecheck green
+- [ ] README updated
+
+---
+
+## implementation notes. likely file outcomes
+
+### keep mostly intact
+
 - `src/sidecar.ts`
-  - current sidecar ownership/reuse/cleanup boundary. avoid unnecessary churn here.
 - `src/commands.ts`
-  - current admin-only slash commands. should stay separate from model-facing parity work.
-- `test/executor-tools.test.ts`
-  - current best starting point for parity tests
-- `test/executor-http.test.ts`
-  - current HTTP contract tests
-
----
-
-## parity matrix
-
-| area                | MCP host                                                   | previous Pi                                         | shipped Pi                                                                  |
-| ------------------- | ---------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| model-facing tools  | `execute`, conditional `resume`                            | `executor_execute`, `executor_resume`, helper tools | `execute`, plus `resume` only for no-UI sessions                            |
-| execute guidance    | dynamic workflow + namespace list                          | static thin description                             | dynamic MCP-style guidance via tool description + per-turn prompt injection |
-| discovery helpers   | inside execute runtime                                     | top-level Pi tools                                  | inside execute runtime only                                                 |
-| execute result text | formatted by shared MCP helpers                            | raw HTTP envelope JSON                              | MCP-style text from HTTP formatted payload                                  |
-| paused behavior     | managed elicitation when supported, pause/resume otherwise | always surfaced paused state                        | inline UI bridge when Pi has UI, pause/resume fallback otherwise            |
-| resume parsing      | tolerant: `{}`, invalid JSON, arrays -> `undefined`        | strict object parser                                | tolerant MCP-style parser                                                   |
-| resume not found    | `No paused execution: <id>` + error bit                    | transport error                                     | normalized MCP-style error text                                             |
-
-## implementation decisions
-
-- tool names ship as exact MCP names: `execute` and `resume`
-- helper tools were removed from the default model-facing surface
-- dynamic registration happens during `session_start`
-- live guidance is reinforced with `before_agent_start.systemPrompt`
-- `resume` is only registered for no-UI sessions
-- managed interaction loops internally until completion when UI is available
-
-## detailed todo list
-
-## phase 0 — lock parity contract before code
-
-goal: freeze what “same UX as MCP” means in Pi terms.
-
-read first:
-
-- `docs/executor/packages/hosts/mcp/src/server.ts`
-- `docs/executor/packages/hosts/mcp/src/server.test.ts`
-- `src/tools.ts`
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`
-
-- [x] Create parity matrix in this file: MCP host behavior vs current Pi behavior vs target Pi behavior. Impl files: `plan.md`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `src/tools.ts`.
-- [x] Decide tool names. preferred parity: `execute` / `resume`. verify no built-in collision. Impl files: `plan.md`, later `src/tools.ts`. Refs: `node_modules/@mariozechner/pi-coding-agent/dist/core/tools/**`, `node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js`.
-- [x] Decide helper-tool fate: remove from active model-facing tool list vs keep hidden/internal only. Impl files: `plan.md`. Refs: `src/tools.ts`, `docs/executor/packages/core/execution/src/engine.ts`.
-- [x] Define parity boundaries where Pi cannot be literal MCP: client capability negotiation, MCP `structuredContent`, transport-level tool hiding. Impl files: `plan.md`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`.
-
-exit criteria:
-
-- parity scope frozen
-- no later phase invents new surface area casually
-
----
-
-## phase 1 — port MCP result semantics into local helpers
-
-goal: make Pi use MCP text/structured behavior, not raw HTTP envelopes.
-
-read first:
-
-- `docs/executor/packages/core/execution/src/engine.ts`
-- `docs/executor/packages/hosts/mcp/src/server.ts`
-- `docs/executor/packages/core/api/src/handlers/executions.ts`
-- `src/http.ts`
-- `src/tools.ts`
-
-- [x] Vendor/adapt `formatExecuteResult()` behavior into local code. Impl files: `src/tools.ts` or `src/mcp-parity.ts`. Refs: `docs/executor/packages/core/execution/src/engine.ts`.
-- [x] Vendor/adapt `formatPausedExecution()` behavior into local code. Impl files: `src/tools.ts` or `src/mcp-parity.ts`. Refs: `docs/executor/packages/core/execution/src/engine.ts`.
-- [x] Map HTTP `/api/executions` response into MCP-style text + structured payload, not `jsonIndent(result)`. Impl files: `src/tools.ts`, maybe `src/http.ts`. Refs: `src/http.ts`, `docs/executor/packages/core/execution/src/engine.ts`.
-- [x] Map HTTP `/api/executions/:id/resume` response into MCP-style text + structured payload. Impl files: `src/tools.ts`, maybe `src/http.ts`. Refs: `src/http.ts`, `docs/executor/packages/hosts/mcp/src/server.ts`.
-- [x] Preserve MCP error semantics: `isError` on result, no extra transport noise in primary text. Impl files: `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `docs/executor/packages/core/execution/src/engine.ts`.
-
-exit criteria:
-
-- execute/resume output from Pi reads like MCP output
-- no raw envelope JSON in normal path
-
----
-
-## phase 2 — port MCP resume input semantics
-
-goal: make Pi resume behavior match MCP tolerance rules.
-
-read first:
-
-- `docs/executor/packages/hosts/mcp/src/server.ts`
-- `docs/executor/packages/hosts/mcp/src/server.test.ts`
-- `src/tools.ts`
-- `src/http.ts`
-
-- [x] Replace strict JSON-object parser with MCP-like `parseJsonContent()` behavior. Impl files: `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`.
-- [x] Treat `{}` as `undefined` content. Impl files: `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`.
-- [x] Treat invalid JSON as `undefined`, not thrown error. Impl files: `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `docs/executor/packages/hosts/mcp/src/server.test.ts`.
-- [x] Treat array JSON as `undefined`, not thrown error. Impl files: `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.test.ts`.
-- [x] Match unknown execution-id behavior to MCP host text + error bit. Impl files: `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `docs/executor/packages/hosts/mcp/src/server.test.ts`.
-
-exit criteria:
-
-- Pi resume edge cases match MCP tests semantically
-
----
-
-## phase 3 — port MCP execute description into Pi
-
-goal: model gets the same playbook MCP provides.
-
-read first:
-
-- `docs/executor/packages/core/execution/src/description.ts`
-- `docs/executor/packages/core/execution/src/tool-invoker.ts`
-- `docs/executor/packages/hosts/mcp/src/server.ts`
-- `src/tools.ts`
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js`
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`
-
-- [x] Create local description builder mirroring `buildExecuteDescription()`. Impl files: `src/tools.ts` or `src/mcp-parity.ts`. Refs: `docs/executor/packages/core/execution/src/description.ts`.
-- [x] Reuse exact workflow bullets where possible. Impl files: same. Refs: `docs/executor/packages/core/execution/src/description.ts`.
-- [x] Reuse exact rules where possible: short queries, namespace narrowing, lazy proxy warning, no `fetch`, etc. Impl files: same. Refs: `docs/executor/packages/core/execution/src/description.ts`.
-- [x] Build live namespace list from current scope sources, not hardcoded strings. Impl files: `src/tools.ts`, maybe `src/http.ts`. Refs: `docs/executor/packages/core/execution/src/description.ts`, `src/http.ts`.
-- [x] Decide where this guidance lives in Pi:
-  - tool `description`
-  - tool `promptSnippet` / `promptGuidelines`
-  - per-turn `before_agent_start.systemPrompt`
-    Impl files: `plan.md`, later `src/index.ts`, `src/tools.ts`. Refs: `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`, `node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js`.
-- [x] If tool metadata cannot stay fresh enough, inject dynamic parity prompt on each turn via `before_agent_start`. Impl files: `src/index.ts` or new helper. Refs: `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`.
-
-exit criteria:
-
-- model sees MCP-like workflow guidance before using execute
-- current namespaces are visible somewhere in prompt path
-
----
-
-## phase 4 — design Pi-side elicitation bridge
-
-goal: when Pi has UI, `execute` behaves like MCP managed elicitation instead of forcing model-visible pause/resume.
-
-read first:
-
-- `docs/executor/packages/hosts/mcp/src/server.ts`
-- `docs/executor/packages/hosts/mcp/src/server.test.ts`
-- `docs/executor/packages/core/execution/src/engine.ts`
-- `src/tools.ts`
-- `node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`
-
-- [x] Audit Pi UI primitives usable from a tool execution context: `ctx.hasUI`, `ctx.ui.confirm`, `ctx.ui.input`, `ctx.ui.editor`, optional `ctx.ui.custom`. Impl files: `plan.md`, later `src/tools.ts`. Refs: `node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`, `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`, `src/tools.ts`.
-- [x] Define mapping from Executor interaction kinds to Pi UI:
-  - approval-only form -> confirm
-  - simple form schema -> generated dialog / editor-backed JSON
-  - URL elicitation -> open browser + confirm done
-    Impl files: `plan.md`, later `src/tools.ts`, maybe `src/commands.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `docs/executor/packages/core/execution/src/engine.ts`, `node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`, `src/tools.ts`, `src/commands.ts`.
-- [x] Define fallback for no-UI mode: surface paused text/structured payload exactly like MCP no-capabilities path. Impl files: `plan.md`, later `src/tools.ts`, maybe `src/index.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.test.ts`, `src/tools.ts`, `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`.
-- [x] Decide whether UI bridge loops internally until execution completes, including multiple elicitations. it should, to match MCP. Impl files: `plan.md`, later `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.test.ts` (`engine can elicit multiple times during a single execute call`), `src/tools.ts`.
-- [x] Define safety/abort behavior if user closes or cancels UI. map to `cancel`. Impl files: `plan.md`, later `src/tools.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`, `src/tools.ts`.
-
-exit criteria:
-
-- clear parity algorithm for execute-with-managed-elicitation
-- clear fallback algorithm for execute-with-pause
-
----
-
-## phase 5 — collapse model-facing surface to MCP shape
-
-goal: make Pi agent interact with Executor like MCP client does.
-
-read first:
-
-- `docs/executor/packages/hosts/mcp/src/server.ts`
-- `docs/executor/packages/core/execution/src/description.ts`
-- `src/tools.ts`
-- `src/index.ts`
-- `src/commands.ts`
-- `README.md`
-
-- [x] Replace `executor_execute` with `execute` (or alias during migration, then remove old name). Impl files: `src/tools.ts`, `src/index.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `src/tools.ts`, `src/index.ts`.
-- [x] Replace `executor_resume` with `resume` only for fallback/no-UI path if feasible. Impl files: `src/tools.ts`, `src/index.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.ts`, `src/tools.ts`, `src/index.ts`.
-- [x] Remove `executor_search`, `executor_describe`, `executor_list_sources` from model-facing default tool list. Impl files: `src/tools.ts`, `src/index.ts`. Refs: `docs/executor/packages/core/execution/src/description.ts`, `src/tools.ts`, `src/index.ts`.
-- [x] Decide migration compatibility policy:
-  - hard rename now
-  - temp aliases with deprecation guidance
-    Impl files: `plan.md`, later `src/tools.ts`, `README.md`. Refs: current tool names in `src/tools.ts`.
-- [x] Keep slash commands human/admin only; do not re-expose call/resume as user commands. Impl files: `src/commands.ts`, `README.md`. Refs: `src/commands.ts`, `README.md`.
-
-exit criteria:
-
-- model sees MCP-like tool surface
-- humans keep admin commands separate
-
----
-
-## phase 6 — runtime registration strategy
-
-goal: work around Pi static tool metadata so UX stays close to MCP.
-
-read first:
-
-- `src/index.ts`
-- `src/tools.ts`
-- `node_modules/@mariozechner/pi-coding-agent/examples/extensions/dynamic-tools.ts`
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`
-- `node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js`
-
-- [x] Decide whether to register tools once at extension init or during `session_start` with live description. Impl files: `plan.md`, later `src/index.ts`, `src/tools.ts`. Refs: `node_modules/@mariozechner/pi-coding-agent/examples/extensions/dynamic-tools.ts`, `src/index.ts`, `src/tools.ts`.
-- [x] If session-start registration is chosen, design idempotent registration and reload behavior. Impl files: `plan.md`, later `src/index.ts`. Refs: `node_modules/@mariozechner/pi-coding-agent/examples/extensions/dynamic-tools.ts`, `src/index.ts`.
-- [x] If live source changes during session matter, design supplemental `before_agent_start` prompt injection rather than trying to mutate tool descriptions after registration. Impl files: `plan.md`, later `src/index.ts`. Refs: `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`, `node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js`, `src/index.ts`.
-- [x] Decide whether hidden/internal helper tools remain registered for debugging only or are removed entirely. Impl files: `plan.md`, later `src/tools.ts`, `src/index.ts`. Refs: `src/tools.ts`, `src/index.ts`, `node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js`.
-
-exit criteria:
-
-- parity prompt path chosen
-- registration timing chosen
-
----
-
-## phase 7 — tests. parity-first
-
-goal: lock behavior against MCP host semantics, not just current local helpers.
-
-read first:
-
-- `docs/executor/packages/hosts/mcp/src/server.test.ts`
-- `docs/executor/packages/hosts/mcp/src/stdio-integration.test.ts`
-- `test/executor-tools.test.ts`
-- `test/executor-http.test.ts`
-- `test/executor-commands.test.ts`
 - `test/executor-sidecar.test.ts`
+- `test/executor-commands.test.ts`
 
-- [x] Add test fixtures copied/adapted from MCP host tests for execute/resume semantics. Impl files: `test/executor-tools.test.ts` or new `test/mcp-parity.test.ts`. Refs: `docs/executor/packages/hosts/mcp/src/server.test.ts`, `test/executor-tools.test.ts`, `src/tools.ts`.
-- [x] Test managed-elicitation path in Pi wrapper with fake UI bridge. Impl files: new tests under `test/`. Refs: `node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`, `docs/executor/packages/hosts/mcp/src/server.test.ts`, `src/tools.ts`.
-- [x] Test no-UI path returns paused text + structured payload with `status: "waiting_for_interaction"` and `interaction.kind`. Impl files: tests under `test/`. Refs: `docs/executor/packages/hosts/mcp/src/server.test.ts`, `docs/executor/packages/core/execution/src/engine.ts`, `src/tools.ts`.
-- [x] Test `resume` hidden/disabled policy at whatever Pi equivalent layer we choose. Impl files: tests under `test/`. Refs: `docs/executor/packages/hosts/mcp/src/server.test.ts`, `src/index.ts`, `src/tools.ts`, final design.
-- [x] Test resume JSON parsing parity: `{}`, invalid JSON, arrays, object JSON. Impl files: tests. Refs: `docs/executor/packages/hosts/mcp/src/server.test.ts`.
-- [x] Test dynamic description builder against fixture sources/namespaces. Impl files: tests under `test/`. Refs: `docs/executor/packages/core/execution/src/description.ts`, `src/tools.ts` or `src/mcp-parity.ts`.
-- [x] Test that broad helper tools are no longer model-facing if that is the chosen target. Impl files: tests under `test/`. Refs: `src/index.ts`, `src/tools.ts`, final tool registry.
+### rewrite significantly
 
-exit criteria:
-
-- parity claims backed by tests, not eyeballing
-
----
-
-## phase 8 — docs + migration notes
-
-goal: README and plan match shipped parity design.
-
-read first:
-
-- `README.md`
 - `src/tools.ts`
-- `src/commands.ts`
-- `docs/executor/packages/core/execution/src/description.ts`
-- `docs/executor/packages/hosts/mcp/src/server.ts`
+- `src/index.ts`
 
-- [x] Rewrite README tool section to match final `execute` / `resume` UX. Impl files: `README.md`. Refs: `src/tools.ts`, `src/index.ts`, `docs/executor/packages/hosts/mcp/src/server.ts`.
-- [x] Document when `resume` appears vs when execute handles interaction inline. Impl files: `README.md`. Refs: `src/tools.ts`, `src/index.ts`, final design.
-- [x] Document that discovery helpers live inside Executor runtime, not as top-level Pi tools. Impl files: `README.md`. Refs: `docs/executor/packages/core/execution/src/description.ts`.
-- [x] Document admin slash commands separately from agent-facing tools. Impl files: `README.md`. Refs: `src/commands.ts`, `README.md`.
-- [x] If helper tools remain as deprecated aliases, document sunset plan. Impl files: `README.md`, maybe `CHANGELOG.md`. Refs: `src/tools.ts`, `README.md`.
+### shrink or delete
 
-exit criteria:
+- `src/executor-adapter.ts`
+- `src/http.ts`
+- `test/executor-tools.test.ts`
+- `test/executor-http.test.ts`
 
-- docs describe MCP-parity mental model, not current 5-tool bridge mental model
+### add
 
----
-
-## decisions to make before implementation
-
-### D1. rename tools to exact MCP names?
-
-recommended: yes.
-
-why:
-
-- “exact same UX” argues for `execute` / `resume`
-- MCP tests and docs all speak those names
-
-risk:
-
-- migration break for existing prompts/scripts using `executor_execute`
-
-mitigation:
-
-- temp aliases one release
-
-### D2. keep helper tools at all?
-
-recommended: no for model-facing default.
-
-why:
-
-- MCP does not expose them
-- they distort the model’s workflow
-
-possible compromise:
-
-- keep hidden/dev-only registration behind a flag
-
-### D3. skill needed?
-
-recommended: not first.
-
-why:
-
-- MCP parity should come from core extension behavior
-- skill can later reinforce best practices, but should not be required for core UX
-
-### D4. exact parity possible?
-
-truth: not literal 1:1.
-
-reasons:
-
-- MCP has explicit client capability negotiation for elicitation
-- Pi exposes `ctx.hasUI` + UI primitives, not MCP client capabilities
-- Pi tool metadata is static after registration
-
-best achievable target:
-
-- semantic parity for model + human experience
-- same tool names
-- same workflow guidance
-- same result formatting
-- same managed-vs-paused interaction split, mapped to Pi capabilities
+- `src/mcp-client.ts`
+- `test/executor-mcp-client.test.ts`
 
 ---
 
-## critical evidence snippets
+## if blocked
 
-### MCP host dynamic description
+if blocked by SDK stability or missing stable client features:
 
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
-
-```ts
-const description = await engine.getDescription();
-const executeTool = server.registerTool("execute", {
-  description,
-  inputSchema: { code: z.string().trim().min(1) },
-}, ...)
-```
-
-### MCP host conditional resume visibility
-
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
-
-```ts
-if (supportsManagedElicitation(server)) {
-  resumeTool.disable();
-} else {
-  resumeTool.enable();
-}
-```
-
-### MCP host inline elicitation path
-
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
-
-```ts
-const result = await engine.execute(code, {
-  onElicitation: makeMcpElicitationHandler(server),
-});
-```
-
-### MCP host pause/resume path
-
-ref: `docs/executor/packages/hosts/mcp/src/server.ts`
-
-```ts
-const outcome = await engine.executeWithPause(code);
-```
-
-### MCP execute workflow guidance
-
-ref: `docs/executor/packages/core/execution/src/description.ts`
-
-```ts
-'1. `const matches = await tools.search({ query: "<intent + key nouns>", limit: 12 });`',
-"3. `const details = await tools.describe.tool({ path });`",
-"5. Use `tools.executor.sources.list()` when you need configured source inventory.",
-"6. Call the tool: `const result = await tools.<path>(input);`",
-```
-
-### current Pi raw execute output
-
-ref: `src/tools.ts`
-
-```ts
-return {
-  content: [{ type: "text", text: jsonIndent(result) }],
-  details: {
-    baseUrl: sidecar.baseUrl,
-    scopeId: sidecar.scope?.id,
-    executionId,
-  },
-};
-```
-
----
-
-## ship checklist for parity work
-
-- [x] agent-facing tools reduced to MCP-shape
-- [x] `execute` prompt/description mirrors MCP guidance + namespaces
-- [x] managed elicitation path exists for Pi UI sessions
-- [x] paused fallback path matches MCP no-capabilities behavior
-- [x] `resume` semantics match MCP parsing + output rules
-- [x] tests mirror MCP host tests where applicable
-- [x] README rewritten to MCP mental model
-
----
-
-## cut order if scope slips
-
-cut last, not first:
-
-1. pretty admin commands
-2. deprecated alias tools
-3. custom form renderer polish
-4. dynamic live namespace refresh every turn
-
-do not cut:
-
-1. MCP result formatting parity
-2. MCP execute workflow guidance parity
-3. helper tools removed from default model-facing surface
-4. managed elicitation vs paused fallback split
-5. MCP-like resume parsing semantics
+- stop
+- write exact blocker in this file
+- name missing feature
+- cite file/docs proving the gap
+- do not silently drift back into hand-rolled MCP or expanded HTTP parity logic

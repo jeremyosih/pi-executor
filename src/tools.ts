@@ -5,24 +5,29 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import { execute, resume, type JsonObject, type JsonValue, type ResumeAction } from "./http.ts";
+import {
+  inspectExecutorMcp,
+  type ExecutorElicitationRequest,
+  type ResumeAction,
+  withExecutorMcpClient,
+} from "./mcp-client.ts";
 import {
   buildExecutorSystemPrompt,
-  loadExecuteDescription,
-  normalizeExecuteResponse,
-  normalizeResumeNotFound,
-  normalizeResumeResponse,
   parseJsonContent,
-  runManagedExecution,
   toToolResult,
   type ExecuteToolDetails,
   type ExecuteToolResult,
-  type WaitingForInteraction,
 } from "./executor-adapter.ts";
+import type { JsonObject, JsonValue } from "./http.ts";
 import { ensureSidecar } from "./sidecar.ts";
 
 const DEFAULT_EXECUTE_DESCRIPTION =
   "Execute TypeScript in a sandboxed runtime with access to configured API tools.";
+
+const DEFAULT_RESUME_DESCRIPTION = [
+  "Resume a paused execution using the executionId returned by execute.",
+  "Never call this without user approval unless they explicitly state otherwise.",
+].join("\n");
 
 const jsonStringSchema = Type.String({ description: "Optional JSON-encoded response content" });
 
@@ -102,10 +107,10 @@ const launchBrowser = async (url: string): Promise<void> => {
 };
 
 const promptForInteraction = async (
-  interaction: WaitingForInteraction,
+  interaction: ExecutorElicitationRequest,
   ctx: ExtensionContext,
 ): Promise<{ action: ResumeAction; content?: JsonObject }> => {
-  if (interaction.kind === "url" && interaction.url) {
+  if (interaction.mode === "url") {
     try {
       await launchBrowser(interaction.url);
       ctx.ui.notify(`Opened ${interaction.url}`, "info");
@@ -122,8 +127,7 @@ const promptForInteraction = async (
     return { action: (action as ResumeAction | undefined) ?? "cancel" };
   }
 
-  const requestedSchema = interaction.requestedSchema;
-  if (!hasSchemaProperties(requestedSchema)) {
+  if (!hasSchemaProperties(interaction.requestedSchema)) {
     const action = await ctx.ui.select("Executor interaction", ["accept", "decline", "cancel"], {
       timeout: undefined,
     });
@@ -131,7 +135,7 @@ const promptForInteraction = async (
   }
 
   ctx.ui.notify(interaction.message, "info");
-  const prefill = JSON.stringify(buildSchemaTemplate(requestedSchema), null, 2);
+  const prefill = JSON.stringify(buildSchemaTemplate(interaction.requestedSchema), null, 2);
   const edited = await ctx.ui.editor("Executor response JSON", prefill);
   if (edited === undefined) {
     return { action: "cancel" };
@@ -148,6 +152,26 @@ const promptForInteraction = async (
   return {
     action: resolvedAction,
     content: parseJsonContent(edited),
+  };
+};
+
+type ExecutorToolset = {
+  executeDescription: string;
+  resumeDescription?: string;
+  hasResume: boolean;
+  instructions?: string;
+};
+
+const loadExecutorToolset = async (baseUrl: string, hasUI: boolean): Promise<ExecutorToolset> => {
+  const inspection = await inspectExecutorMcp(baseUrl, hasUI);
+  const executeTool = inspection.tools.find((tool) => tool.name === "execute");
+  const resumeTool = inspection.tools.find((tool) => tool.name === "resume");
+
+  return {
+    executeDescription: executeTool?.description ?? inspection.instructions ?? DEFAULT_EXECUTE_DESCRIPTION,
+    resumeDescription: resumeTool?.description ?? DEFAULT_RESUME_DESCRIPTION,
+    hasResume: resumeTool !== undefined,
+    instructions: inspection.instructions,
   };
 };
 
@@ -171,34 +195,24 @@ const buildExecuteTool = (description: string) =>
         throw new Error(`Executor sidecar scope id missing for ${ctx.cwd}`);
       }
 
-      if (ctx.hasUI) {
-        const outcome = await runManagedExecution(
-          {
-            execute: (code) => execute(sidecar.baseUrl, code),
-            resume: (executionId, payload) => resume(sidecar.baseUrl, executionId, payload),
-          },
-          params.code,
-          async (interaction) => promptForInteraction(interaction, ctx),
-        );
+      const outcome = await withExecutorMcpClient(
+        sidecar.baseUrl,
+        {
+          hasUI: ctx.hasUI,
+          onElicitation: ctx.hasUI ? (interaction) => promptForInteraction(interaction, ctx) : undefined,
+        },
+        async (client) => client.execute(params.code),
+      );
 
-        return toToolResult(outcome, { baseUrl: sidecar.baseUrl, scopeId });
-      }
-
-      return toToolResult(normalizeExecuteResponse(await execute(sidecar.baseUrl, params.code)), {
-        baseUrl: sidecar.baseUrl,
-        scopeId,
-      });
+      return toToolResult(outcome, { baseUrl: sidecar.baseUrl, scopeId });
     },
   });
 
-const buildResumeTool = () =>
+const buildResumeTool = (description: string) =>
   defineTool({
     name: "resume",
     label: "Resume",
-    description: [
-      "Resume a paused execution using the executionId returned by execute.",
-      "Never call this without user approval unless they explicitly state otherwise.",
-    ].join("\n"),
+    description,
     promptSnippet:
       "Resume a paused Executor execution after the user has completed the required interaction.",
     promptGuidelines: ["Use the exact executionId returned by execute."],
@@ -211,48 +225,33 @@ const buildResumeTool = () =>
       const sidecar = await ensureSidecar(ctx.cwd);
       const scopeId = sidecar.scope?.id ?? "";
 
-      try {
-        const result = await resume(sidecar.baseUrl, params.executionId, {
-          action: params.action as ResumeAction,
-          content: parseJsonContent(params.content),
-        });
+      const outcome = await withExecutorMcpClient(
+        sidecar.baseUrl,
+        { hasUI: false },
+        async (client) =>
+          client.resume(
+            params.executionId,
+            params.action as ResumeAction,
+            parseJsonContent(params.content),
+          ),
+      );
 
-        return toToolResult(normalizeResumeResponse(result), {
-          baseUrl: sidecar.baseUrl,
-          scopeId,
-        });
-      } catch (error) {
-        const normalized =
-          error instanceof Error ? normalizeResumeNotFound(error, params.executionId) : undefined;
-        if (normalized) {
-          return {
-            ...normalized,
-            details: {
-              ...normalized.details,
-              scopeId,
-            },
-          };
-        }
-        throw error;
-      }
+      return toToolResult(outcome, {
+        baseUrl: sidecar.baseUrl,
+        scopeId,
+      });
     },
   });
 
-export const getToolNamesForSession = (hasUI: boolean): string[] =>
-  hasUI ? ["execute"] : ["execute", "resume"];
-
 export const loadExecutorPrompt = async (cwd: string, hasUI: boolean): Promise<string> => {
   const sidecar = await ensureSidecar(cwd);
-  const scopeId = sidecar.scope?.id;
-  if (!scopeId) {
-    return buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, hasUI);
-  }
 
   try {
-    const description = await loadExecuteDescription(sidecar.baseUrl, scopeId);
-    return buildExecutorSystemPrompt(description, hasUI);
+    const toolset = await loadExecutorToolset(sidecar.baseUrl, hasUI);
+    const description = toolset.instructions ?? toolset.executeDescription;
+    return buildExecutorSystemPrompt(description, toolset.hasResume);
   } catch {
-    return buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, hasUI);
+    return buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, !hasUI);
   }
 };
 
@@ -273,16 +272,15 @@ export const createExecutorTools = async (
   hasUI: boolean,
 ): Promise<ToolDefinition[]> => {
   const sidecar = await ensureSidecar(cwd);
-  const scopeId = sidecar.scope?.id;
-  const description = scopeId
-    ? await loadExecuteDescription(sidecar.baseUrl, scopeId).catch(
-        () => DEFAULT_EXECUTE_DESCRIPTION,
-      )
-    : DEFAULT_EXECUTE_DESCRIPTION;
+  const toolset = await loadExecutorToolset(sidecar.baseUrl, hasUI).catch(() => ({
+    executeDescription: DEFAULT_EXECUTE_DESCRIPTION,
+    resumeDescription: DEFAULT_RESUME_DESCRIPTION,
+    hasResume: !hasUI,
+  }));
 
-  return hasUI
-    ? [buildExecuteTool(description)]
-    : [buildExecuteTool(description), buildResumeTool()];
+  return toolset.hasResume
+    ? [buildExecuteTool(toolset.executeDescription), buildResumeTool(toolset.resumeDescription ?? DEFAULT_RESUME_DESCRIPTION)]
+    : [buildExecuteTool(toolset.executeDescription)];
 };
 
 export const registerExecutorTools = async (

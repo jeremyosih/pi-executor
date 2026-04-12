@@ -21,7 +21,7 @@
   },
   "type": "module",
   "scripts": {
-    "test": "bun test",
+    "test": "bun test test",
     "typecheck": "tsc --noEmit",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
@@ -33,7 +33,9 @@
   },
   "dependencies": {
     "@executor-js/sdk": "^0.0.1-beta.2",
-    "executor": "^1.4.4"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "executor": "^1.4.4",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",

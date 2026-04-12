@@ -10,62 +10,6 @@ export type ScopeInfo = {
   dir: string;
 };
 
-export type ExecuteCompleted = {
-  status: "completed";
-  text: string;
-  structured: JsonValue;
-  isError: boolean;
-};
-
-export type ExecutePaused = {
-  status: "paused";
-  text: string;
-  structured: JsonValue;
-};
-
-export type ExecuteResponse = ExecuteCompleted | ExecutePaused;
-
-export type ResumeAction = "accept" | "decline" | "cancel";
-
-export type ResumePayload = {
-  action: ResumeAction;
-  content?: JsonObject;
-};
-
-export type ResumeResponse = {
-  text: string;
-  structured: JsonValue;
-  isError: boolean;
-};
-
-export type ToolMetadataResponse = {
-  id: string;
-  pluginKey: string;
-  sourceId: string;
-  name: string;
-  description?: string;
-  mayElicit?: boolean;
-};
-
-export type ToolSchemaResponse = {
-  id: string;
-  inputTypeScript?: string;
-  outputTypeScript?: string;
-  typeScriptDefinitions?: Record<string, string>;
-  inputSchema?: JsonValue;
-  outputSchema?: JsonValue;
-};
-
-export type SourceResponse = {
-  id: string;
-  name: string;
-  kind: string;
-  runtime?: boolean;
-  canRemove?: boolean;
-  canRefresh?: boolean;
-  canEdit?: boolean;
-};
-
 export type FetchJsonOptions = {
   method?: "GET" | "POST";
   timeoutMs?: number;
@@ -105,45 +49,6 @@ const readString = (value: JsonValue | undefined, field: string): string => {
     throw new Error(`Expected ${field} to be a string`);
   }
   return value;
-};
-
-const readBoolean = (value: JsonValue | undefined, field: string): boolean => {
-  if (typeof value !== "boolean") {
-    throw new Error(`Expected ${field} to be a boolean`);
-  }
-  return value;
-};
-
-const readOptionalString = (value: JsonValue | undefined, field: string): string | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  return readString(value, field);
-};
-
-const readOptionalBoolean = (value: JsonValue | undefined, field: string): boolean | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  return readBoolean(value, field);
-};
-
-const readOptionalStringRecord = (
-  value: JsonValue | undefined,
-  field: string,
-): Record<string, string> | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isJsonObject(value)) {
-    throw new Error(`Expected ${field} to be an object`);
-  }
-
-  const record: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    record[key] = readString(entry, `${field}.${key}`);
-  }
-  return record;
 };
 
 const parseJson = async (response: Response): Promise<JsonValue> => {
@@ -235,150 +140,8 @@ export const parseScopeInfo = (value: JsonValue): ScopeInfo => {
   };
 };
 
-export const parseExecuteResponse = (value: JsonValue): ExecuteResponse => {
-  if (!isJsonObject(value)) {
-    throw new Error("Expected execute response to be an object");
-  }
-
-  const status = readString(value.status, "execute.status");
-  if (status === "completed") {
-    return {
-      status,
-      text: readString(value.text, "execute.text"),
-      structured: value.structured ?? null,
-      isError: readBoolean(value.isError, "execute.isError"),
-    };
-  }
-
-  if (status === "paused") {
-    return {
-      status,
-      text: readString(value.text, "execute.text"),
-      structured: value.structured ?? null,
-    };
-  }
-
-  throw new Error(`Unexpected execute status: ${status}`);
-};
-
-export const parseResumeResponse = (value: JsonValue): ResumeResponse => {
-  if (!isJsonObject(value)) {
-    throw new Error("Expected resume response to be an object");
-  }
-
-  return {
-    text: readString(value.text, "resume.text"),
-    structured: value.structured ?? null,
-    isError: readBoolean(value.isError, "resume.isError"),
-  };
-};
-
-export const parseToolMetadataList = (value: JsonValue): ToolMetadataResponse[] => {
-  if (!Array.isArray(value)) {
-    throw new Error("Expected tools list to be an array");
-  }
-
-  return value.map((entry, index) => {
-    if (!isJsonObject(entry)) {
-      throw new Error(`Expected tools[${index}] to be an object`);
-    }
-
-    return {
-      id: readString(entry.id, `tools[${index}].id`),
-      pluginKey: readString(entry.pluginKey, `tools[${index}].pluginKey`),
-      sourceId: readString(entry.sourceId, `tools[${index}].sourceId`),
-      name: readString(entry.name, `tools[${index}].name`),
-      description: readOptionalString(entry.description, `tools[${index}].description`),
-      mayElicit: readOptionalBoolean(entry.mayElicit, `tools[${index}].mayElicit`),
-    };
-  });
-};
-
-export const parseToolSchemaResponse = (value: JsonValue): ToolSchemaResponse => {
-  if (!isJsonObject(value)) {
-    throw new Error("Expected tool schema response to be an object");
-  }
-
-  return {
-    id: readString(value.id, "toolSchema.id"),
-    inputTypeScript: readOptionalString(value.inputTypeScript, "toolSchema.inputTypeScript"),
-    outputTypeScript: readOptionalString(value.outputTypeScript, "toolSchema.outputTypeScript"),
-    typeScriptDefinitions: readOptionalStringRecord(
-      value.typeScriptDefinitions,
-      "toolSchema.typeScriptDefinitions",
-    ),
-    inputSchema: value.inputSchema,
-    outputSchema: value.outputSchema,
-  };
-};
-
-export const parseSourceList = (value: JsonValue): SourceResponse[] => {
-  if (!Array.isArray(value)) {
-    throw new Error("Expected sources list to be an array");
-  }
-
-  return value.map((entry, index) => {
-    if (!isJsonObject(entry)) {
-      throw new Error(`Expected sources[${index}] to be an object`);
-    }
-
-    return {
-      id: readString(entry.id, `sources[${index}].id`),
-      name: readString(entry.name, `sources[${index}].name`),
-      kind: readString(entry.kind, `sources[${index}].kind`),
-      runtime: readOptionalBoolean(entry.runtime, `sources[${index}].runtime`),
-      canRemove: readOptionalBoolean(entry.canRemove, `sources[${index}].canRemove`),
-      canRefresh: readOptionalBoolean(entry.canRefresh, `sources[${index}].canRefresh`),
-      canEdit: readOptionalBoolean(entry.canEdit, `sources[${index}].canEdit`),
-    };
-  });
-};
-
 export const getScope = async (baseUrl: string, timeoutMs?: number): Promise<ScopeInfo> =>
   fetchJson(baseUrl, "/api/scope", parseScopeInfo, { timeoutMs });
-
-export const execute = async (baseUrl: string, code: string): Promise<ExecuteResponse> =>
-  fetchJson(baseUrl, "/api/executions", parseExecuteResponse, {
-    method: "POST",
-    body: { code },
-  });
-
-export const resume = async (
-  baseUrl: string,
-  executionId: string,
-  payload: ResumePayload,
-): Promise<ResumeResponse> =>
-  fetchJson(
-    baseUrl,
-    `/api/executions/${encodeURIComponent(executionId)}/resume`,
-    parseResumeResponse,
-    {
-      method: "POST",
-      body: payload.content
-        ? { action: payload.action, content: payload.content }
-        : { action: payload.action },
-    },
-  );
-
-export const listTools = async (
-  baseUrl: string,
-  scopeId: string,
-): Promise<ToolMetadataResponse[]> =>
-  fetchJson(baseUrl, `/api/scopes/${encodeURIComponent(scopeId)}/tools`, parseToolMetadataList);
-
-export const getToolSchema = async (
-  baseUrl: string,
-  scopeId: string,
-  toolId: string,
-): Promise<ToolSchemaResponse> =>
-  fetchJson(
-    baseUrl,
-    `/api/scopes/${encodeURIComponent(scopeId)}/tools/${encodeURIComponent(toolId)}/schema`,
-    parseToolSchemaResponse,
-  );
-
-export const listSources = async (baseUrl: string, scopeId: string): Promise<SourceResponse[]> =>
-  fetchJson(baseUrl, `/api/scopes/${encodeURIComponent(scopeId)}/sources`, parseSourceList);
 
 export const waitForHealthyScope = async (
   baseUrl: string,
@@ -394,7 +157,8 @@ export const waitForHealthyScope = async (
         return scope;
       }
     } catch {
-      // keep polling until timeout
+      await delay(POLL_INTERVAL_MS);
+      continue;
     }
 
     await delay(POLL_INTERVAL_MS);
