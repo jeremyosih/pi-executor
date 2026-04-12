@@ -1,5 +1,10 @@
 import { StringEnum, Type, type Static } from "@mariozechner/pi-ai";
-import { defineTool, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import {
+  defineTool,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type ToolDefinition,
+} from "@mariozechner/pi-coding-agent";
 import { execute, resume, type JsonObject, type JsonValue, type ResumeAction } from "./http.ts";
 import {
   buildExecutorSystemPrompt,
@@ -194,7 +199,8 @@ const buildResumeTool = () =>
       "Resume a paused execution using the executionId returned by execute.",
       "Never call this without user approval unless they explicitly state otherwise.",
     ].join("\n"),
-    promptSnippet: "Resume a paused Executor execution after the user has completed the required interaction.",
+    promptSnippet:
+      "Resume a paused Executor execution after the user has completed the required interaction.",
     promptGuidelines: ["Use the exact executionId returned by execute."],
     parameters: Type.Object({
       executionId: Type.String({ description: "The execution ID from the paused result" }),
@@ -262,14 +268,21 @@ export const isExecutorToolDetails = (value: object | null): value is ExecuteToo
   );
 };
 
-export const createExecutorTools = async (cwd: string, hasUI: boolean): Promise<ToolDefinition[]> => {
+export const createExecutorTools = async (
+  cwd: string,
+  hasUI: boolean,
+): Promise<ToolDefinition[]> => {
   const sidecar = await ensureSidecar(cwd);
   const scopeId = sidecar.scope?.id;
   const description = scopeId
-    ? await loadExecuteDescription(sidecar.baseUrl, scopeId).catch(() => DEFAULT_EXECUTE_DESCRIPTION)
+    ? await loadExecuteDescription(sidecar.baseUrl, scopeId).catch(
+        () => DEFAULT_EXECUTE_DESCRIPTION,
+      )
     : DEFAULT_EXECUTE_DESCRIPTION;
 
-  return hasUI ? [buildExecuteTool(description)] : [buildExecuteTool(description), buildResumeTool()];
+  return hasUI
+    ? [buildExecuteTool(description)]
+    : [buildExecuteTool(description), buildResumeTool()];
 };
 
 export const registerExecutorTools = async (

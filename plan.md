@@ -593,15 +593,15 @@ fresh agent should start in these exact locations when implementing:
 
 ## parity matrix
 
-| area | MCP host | previous Pi | shipped Pi |
-| --- | --- | --- | --- |
-| model-facing tools | `execute`, conditional `resume` | `executor_execute`, `executor_resume`, helper tools | `execute`, plus `resume` only for no-UI sessions |
-| execute guidance | dynamic workflow + namespace list | static thin description | dynamic MCP-style guidance via tool description + per-turn prompt injection |
-| discovery helpers | inside execute runtime | top-level Pi tools | inside execute runtime only |
-| execute result text | formatted by shared MCP helpers | raw HTTP envelope JSON | MCP-style text from HTTP formatted payload |
-| paused behavior | managed elicitation when supported, pause/resume otherwise | always surfaced paused state | inline UI bridge when Pi has UI, pause/resume fallback otherwise |
-| resume parsing | tolerant: `{}`, invalid JSON, arrays -> `undefined` | strict object parser | tolerant MCP-style parser |
-| resume not found | `No paused execution: <id>` + error bit | transport error | normalized MCP-style error text |
+| area                | MCP host                                                   | previous Pi                                         | shipped Pi                                                                  |
+| ------------------- | ---------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
+| model-facing tools  | `execute`, conditional `resume`                            | `executor_execute`, `executor_resume`, helper tools | `execute`, plus `resume` only for no-UI sessions                            |
+| execute guidance    | dynamic workflow + namespace list                          | static thin description                             | dynamic MCP-style guidance via tool description + per-turn prompt injection |
+| discovery helpers   | inside execute runtime                                     | top-level Pi tools                                  | inside execute runtime only                                                 |
+| execute result text | formatted by shared MCP helpers                            | raw HTTP envelope JSON                              | MCP-style text from HTTP formatted payload                                  |
+| paused behavior     | managed elicitation when supported, pause/resume otherwise | always surfaced paused state                        | inline UI bridge when Pi has UI, pause/resume fallback otherwise            |
+| resume parsing      | tolerant: `{}`, invalid JSON, arrays -> `undefined`        | strict object parser                                | tolerant MCP-style parser                                                   |
+| resume not found    | `No paused execution: <id>` + error bit                    | transport error                                     | normalized MCP-style error text                                             |
 
 ## implementation decisions
 

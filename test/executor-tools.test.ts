@@ -13,17 +13,24 @@ import { getToolNamesForSession } from "../src/tools.ts";
 
 describe("executor MCP parity helpers", () => {
   test("builds MCP-style execute guidance with live namespaces", () => {
-    const description = buildExecuteDescriptionFromData(["zeta", "alpha"], [
-      { id: "alpha", name: "Alpha Source" },
-      { id: "zeta", name: "zeta" },
-    ]);
+    const description = buildExecuteDescriptionFromData(
+      ["zeta", "alpha"],
+      [
+        { id: "alpha", name: "Alpha Source" },
+        { id: "zeta", name: "zeta" },
+      ],
+    );
 
     expect(description).toContain("## Workflow");
     expect(description).toContain("tools.search");
     expect(description).toContain("## Available namespaces");
-    expect(description).toContain("Code is executed as a script snippet/body, not as an ES module file.");
+    expect(description).toContain(
+      "Code is executed as a script snippet/body, not as an ES module file.",
+    );
     expect(description).toContain("Use `return ...` for the final result");
-    expect(description).toContain("Do not use `export`, `export default`, `import`, or `module.exports`");
+    expect(description).toContain(
+      "Do not use `export`, `export default`, `import`, or `module.exports`",
+    );
     expect(description.indexOf("`alpha` — Alpha Source")).toBeLessThan(
       description.indexOf("`zeta`"),
     );
@@ -89,54 +96,54 @@ describe("executor MCP parity helpers", () => {
     const prompts: string[] = [];
     const transport: ExecutionTransport = {
       execute: async () => ({
-          status: "paused",
-          text: "first",
-          structured: {
-            status: "waiting_for_interaction",
-            executionId: "exec_1",
-            interaction: {
-              kind: "form",
-              message: "What is your name?",
-              requestedSchema: {
-                type: "object",
-                properties: { name: { type: "string" } },
-              },
+        status: "paused",
+        text: "first",
+        structured: {
+          status: "waiting_for_interaction",
+          executionId: "exec_1",
+          interaction: {
+            kind: "form",
+            message: "What is your name?",
+            requestedSchema: {
+              type: "object",
+              properties: { name: { type: "string" } },
             },
           },
-        }),
-        resume: async (executionId, payload): Promise<ResumeResponse> => {
-          if (executionId === "exec_1") {
-            prompts.push(String(payload.content?.name));
-            return {
-              text: "second",
-              structured: {
-                status: "waiting_for_interaction" as const,
-                executionId: "exec_2",
-                interaction: {
-                  kind: "form" as const,
-                  message: "Confirm?",
-                  requestedSchema: {
-                    type: "object",
-                    properties: { confirmed: { type: "boolean" } },
-                  },
+        },
+      }),
+      resume: async (executionId, payload): Promise<ResumeResponse> => {
+        if (executionId === "exec_1") {
+          prompts.push(String(payload.content?.name));
+          return {
+            text: "second",
+            structured: {
+              status: "waiting_for_interaction" as const,
+              executionId: "exec_2",
+              interaction: {
+                kind: "form" as const,
+                message: "Confirm?",
+                requestedSchema: {
+                  type: "object",
+                  properties: { confirmed: { type: "boolean" } },
                 },
               },
-              isError: false,
-            };
-          }
-
-          prompts.push(String(payload.content?.confirmed));
-          return {
-            text: "done",
-            structured: {
-              status: "completed" as const,
-              result: "name=Alice,confirmed=true",
-              logs: [],
             },
             isError: false,
           };
-        },
-      };
+        }
+
+        prompts.push(String(payload.content?.confirmed));
+        return {
+          text: "done",
+          structured: {
+            status: "completed" as const,
+            result: "name=Alice,confirmed=true",
+            logs: [],
+          },
+          isError: false,
+        };
+      },
+    };
 
     const outcome = await runManagedExecution(
       transport,

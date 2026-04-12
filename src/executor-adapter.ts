@@ -1,4 +1,13 @@
-import { HttpError, type ExecuteResponse, type JsonObject, type JsonValue, type ResumePayload, type ResumeResponse, listSources, listTools } from "./http.ts";
+import {
+  HttpError,
+  type ExecuteResponse,
+  type JsonObject,
+  type JsonValue,
+  type ResumePayload,
+  type ResumeResponse,
+  listSources,
+  listTools,
+} from "./http.ts";
 
 export type SourceSummary = {
   id: string;
@@ -222,7 +231,10 @@ export const buildExecuteDescriptionFromData = (
 };
 
 export const loadExecuteDescription = async (baseUrl: string, scopeId: string): Promise<string> => {
-  const [sources, tools] = await Promise.all([listSources(baseUrl, scopeId), listTools(baseUrl, scopeId)]);
+  const [sources, tools] = await Promise.all([
+    listSources(baseUrl, scopeId),
+    listTools(baseUrl, scopeId),
+  ]);
   const namespaces = Array.from(new Set(tools.map((tool) => tool.sourceId)));
   return buildExecuteDescriptionFromData(
     namespaces,
