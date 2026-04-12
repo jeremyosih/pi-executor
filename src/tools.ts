@@ -1,462 +1,286 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  defineTool,
-  formatSize,
-  truncateHead,
-  withFileMutationQueue,
-} from "@mariozechner/pi-coding-agent";
-import {
-  execute,
-  getToolSchema,
-  listSources,
-  listTools,
-  type ExecuteCompleted,
-  type ExecuteResponse,
-  type JsonObject,
-  type JsonValue,
-  type ResumeAction,
-  resume,
-} from "./http.ts";
-import { ensureSidecar } from "./sidecar.ts";
-// Use Type from @mariozechner/pi-ai so the package only needs Pi core peers, not a direct typebox peer.
 import { StringEnum, Type, type Static } from "@mariozechner/pi-ai";
+import { defineTool, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { execute, resume, type JsonObject, type JsonValue, type ResumeAction } from "./http.ts";
+import {
+  buildExecutorSystemPrompt,
+  loadExecuteDescription,
+  normalizeExecuteResponse,
+  normalizeResumeNotFound,
+  normalizeResumeResponse,
+  parseJsonContent,
+  runManagedExecution,
+  toToolResult,
+  type ExecuteToolDetails,
+  type ExecuteToolResult,
+  type WaitingForInteraction,
+} from "./executor-adapter.ts";
+import { ensureSidecar } from "./sidecar.ts";
 
-export type SearchSnippetInput = {
-  query: string;
-  namespace?: string;
-  limit?: number;
-};
+const DEFAULT_EXECUTE_DESCRIPTION =
+  "Execute TypeScript in a sandboxed runtime with access to configured API tools.";
 
-export type DescribeSnippetInput = {
-  path: string;
-};
-
-export type ListSourcesSnippetInput = {
-  query?: string;
-  limit?: number;
-};
-
-export type DescribeResult = {
-  path: string;
-  name: string;
-  description?: string;
-  inputTypeScript?: string;
-  outputTypeScript?: string;
-  typeScriptDefinitions?: Record<string, string>;
-};
-
-export type SourceListResult = {
-  id: string;
-  name: string;
-  kind: string;
-  runtime?: boolean;
-  canRemove?: boolean;
-  canRefresh?: boolean;
-  canEdit?: boolean;
-};
-
-export type TruncatedOutput = {
-  text: string;
-  fullOutputPath?: string;
-};
-
-const jsonIndent = (value: JsonValue): string => JSON.stringify(value, null, 2);
-
-const buildObjectLiteral = (input: Record<string, JsonValue | undefined>): string => {
-  const filteredEntries = Object.entries(input).filter(([, value]) => value !== undefined);
-  const objectValue = Object.fromEntries(filteredEntries) as Record<string, JsonValue>;
-  return JSON.stringify(objectValue, null, 2);
-};
-
-export const buildSearchSnippet = (input: SearchSnippetInput): string =>
-  `return tools.search(${buildObjectLiteral({
-    query: input.query,
-    namespace: input.namespace,
-    limit: input.limit,
-  })});`;
-
-export const buildDescribeSnippet = (input: DescribeSnippetInput): string =>
-  `return tools.describe.tool(${buildObjectLiteral({ path: input.path })});`;
-
-export const buildListSourcesSnippet = (input: ListSourcesSnippetInput): string =>
-  `return tools.executor.sources.list(${buildObjectLiteral({
-    query: input.query,
-    limit: input.limit,
-  })});`;
-
-export const isExecuteCompleted = (result: ExecuteResponse): result is ExecuteCompleted =>
-  result.status === "completed";
-
-export const isCompletedNonError = (result: ExecuteResponse): result is ExecuteCompleted =>
-  result.status === "completed" && result.isError === false;
+const jsonStringSchema = Type.String({ description: "Optional JSON-encoded response content" });
 
 const isJsonObject = (value: JsonValue | undefined): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-export const unwrapStructuredResult = (result: ExecuteCompleted): JsonValue | undefined => {
-  if (!isJsonObject(result.structured)) {
-    return undefined;
+const hasSchemaProperties = (schema: JsonObject | undefined): boolean => {
+  if (!schema) {
+    return false;
   }
-  return result.structured.result;
+
+  const properties = schema.properties;
+  return isJsonObject(properties) && Object.keys(properties).length > 0;
 };
 
-const readString = (value: JsonValue | undefined): string | undefined =>
-  typeof value === "string" ? value : undefined;
-
-const readBoolean = (value: JsonValue | undefined): boolean | undefined =>
-  typeof value === "boolean" ? value : undefined;
-
-const readStringRecord = (value: JsonValue | undefined): Record<string, string> | undefined => {
-  if (!isJsonObject(value)) {
-    return undefined;
+const buildSchemaTemplate = (schema: JsonObject | undefined): JsonObject => {
+  if (!schema) {
+    return {};
   }
 
-  const entries = Object.entries(value).filter(([, entry]) => typeof entry === "string") as [
-    string,
-    string,
-  ][];
-  return Object.fromEntries(entries);
-};
-
-const toDescribeResult = (value: JsonValue, fallbackPath: string): DescribeResult | undefined => {
-  if (!isJsonObject(value)) {
-    return undefined;
+  const properties = schema.properties;
+  if (!isJsonObject(properties)) {
+    return {};
   }
 
-  return {
-    path: readString(value.path) ?? fallbackPath,
-    name: readString(value.name) ?? fallbackPath,
-    description: readString(value.description),
-    inputTypeScript: readString(value.inputTypeScript),
-    outputTypeScript: readString(value.outputTypeScript),
-    typeScriptDefinitions: readStringRecord(value.typeScriptDefinitions),
-  };
-};
-
-const toSourceList = (value: JsonValue): SourceListResult[] | undefined => {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value.flatMap((entry) => {
-    if (!isJsonObject(entry)) {
-      return [];
+  const template: JsonObject = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (!isJsonObject(value)) {
+      continue;
     }
 
-    const id = readString(entry.id);
-    const name = readString(entry.name);
-    const kind = readString(entry.kind);
-    if (!id || !name || !kind) {
-      return [];
+    switch (value.type) {
+      case "boolean":
+        template[key] = false;
+        break;
+      case "number":
+      case "integer":
+        template[key] = 0;
+        break;
+      case "array":
+        template[key] = [];
+        break;
+      case "object":
+        template[key] = {};
+        break;
+      default:
+        template[key] = "";
+        break;
     }
-
-    return [
-      {
-        id,
-        name,
-        kind,
-        runtime: readBoolean(entry.runtime),
-        canRemove: readBoolean(entry.canRemove),
-        canRefresh: readBoolean(entry.canRefresh),
-        canEdit: readBoolean(entry.canEdit),
-      },
-    ];
-  });
-};
-
-export const truncateToolOutput = async (
-  text: string,
-  tempPrefix: string,
-): Promise<TruncatedOutput> => {
-  const truncation = truncateHead(text, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-
-  if (!truncation.truncated) {
-    return { text: truncation.content };
   }
 
-  const tempDir = await mkdtemp(join(tmpdir(), tempPrefix));
-  const fullOutputPath = join(tempDir, "output.txt");
-  await withFileMutationQueue(fullOutputPath, async () => {
-    await writeFile(fullOutputPath, text, "utf8");
-  });
-
-  const omittedLines = truncation.totalLines - truncation.outputLines;
-  const omittedBytes = truncation.totalBytes - truncation.outputBytes;
-  const suffix = [
-    "",
-    `[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`,
-    `(${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`,
-    `${omittedLines} lines (${formatSize(omittedBytes)}) omitted.`,
-    `Full output saved to: ${fullOutputPath}]`,
-  ].join(" ");
-
-  return {
-    text: `${truncation.content}\n\n${suffix.trim()}`,
-    fullOutputPath,
-  };
+  return template;
 };
 
-const formatJsonResult = async (value: JsonValue, tempPrefix: string): Promise<TruncatedOutput> =>
-  truncateToolOutput(jsonIndent(value), tempPrefix);
+const launchBrowser = async (url: string): Promise<void> => {
+  const { spawn } = await import("node:child_process");
+  const platform = process.platform;
+  const launcher =
+    platform === "darwin"
+      ? { command: "open", args: [url] }
+      : platform === "win32"
+        ? { command: "cmd", args: ["/c", "start", "", url] }
+        : { command: "xdg-open", args: [url] };
 
-export const describeViaHttp = async (
-  baseUrl: string,
-  scopeId: string,
-  path: string,
-): Promise<DescribeResult> => {
-  const tools = await listTools(baseUrl, scopeId);
-  const metadata = tools.find((tool) => tool.id === path);
-  const schema = await getToolSchema(baseUrl, scopeId, path);
-  return {
-    path,
-    name: metadata?.name ?? path,
-    description: metadata?.description,
-    inputTypeScript: schema.inputTypeScript,
-    outputTypeScript: schema.outputTypeScript,
-    typeScriptDefinitions: schema.typeScriptDefinitions,
-  };
-};
-
-export const listSourcesViaHttp = async (
-  baseUrl: string,
-  scopeId: string,
-): Promise<SourceListResult[]> => {
-  const sources = await listSources(baseUrl, scopeId);
-  return sources.map((source) => ({
-    id: source.id,
-    name: source.name,
-    kind: source.kind,
-    runtime: source.runtime,
-    canRemove: source.canRemove,
-    canRefresh: source.canRefresh,
-    canEdit: source.canEdit,
-  }));
-};
-
-const executeSnippet = async (
-  cwd: string,
-  code: string,
-): Promise<{ baseUrl: string; scopeId: string; result: ExecuteResponse }> => {
-  const sidecar = await ensureSidecar(cwd);
-  const scopeId = sidecar.scope?.id ?? (await ensureSidecar(cwd)).scope?.id;
-  if (!scopeId) {
-    throw new Error(`Executor sidecar scope id missing for ${cwd}`);
-  }
-  return {
-    baseUrl: sidecar.baseUrl,
-    scopeId,
-    result: await execute(sidecar.baseUrl, code),
-  };
-};
-
-const jsonStringSchema = Type.String({ description: "JSON object string" });
-
-const executeTool = defineTool({
-  name: "executor_execute",
-  label: "Executor Execute",
-  description:
-    "Execute JavaScript code in the local Executor sidecar for the current working directory.",
-  promptSnippet:
-    "Execute JavaScript in the local Executor sidecar for the current working directory.",
-  promptGuidelines: ["Use this when you need Executor's runtime instead of Pi's built-in tools."],
-  parameters: Type.Object({
-    code: Type.String({ description: "JavaScript code to execute" }),
-  }),
-  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-    const sidecar = await ensureSidecar(ctx.cwd);
-    const result = await execute(sidecar.baseUrl, params.code);
-    const executionId =
-      result.status === "paused" &&
-      isJsonObject(result.structured) &&
-      typeof result.structured.executionId === "string"
-        ? result.structured.executionId
-        : undefined;
-
-    return {
-      content: [{ type: "text", text: jsonIndent(result) }],
-      details: {
-        baseUrl: sidecar.baseUrl,
-        scopeId: sidecar.scope?.id,
-        executionId,
-      },
-    };
-  },
-});
-
-const resumeTool = defineTool({
-  name: "executor_resume",
-  label: "Executor Resume",
-  description: "Resume a paused Executor execution by id.",
-  promptSnippet: "Resume a paused Executor execution after user interaction is complete.",
-  promptGuidelines: ["Use the exact executionId returned by executor_execute or /executor call."],
-  parameters: Type.Object({
-    executionId: Type.String({ description: "Paused execution id" }),
-    action: StringEnum(["accept", "decline", "cancel"] as const),
-    contentJson: Type.Optional(jsonStringSchema),
-  }),
-  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-    const sidecar = await ensureSidecar(ctx.cwd);
-    const content = params.contentJson ? parseJsonObjectString(params.contentJson) : undefined;
-    const result = await resume(sidecar.baseUrl, params.executionId, {
-      action: params.action as ResumeAction,
-      content,
+  await new Promise<void>((resolveLaunch, reject) => {
+    const child = spawn(launcher.command, launcher.args, {
+      stdio: "ignore",
+      detached: true,
     });
 
-    return {
-      content: [{ type: "text", text: jsonIndent(result) }],
-      details: {
-        baseUrl: sidecar.baseUrl,
-        scopeId: sidecar.scope?.id,
-        executionId: params.executionId,
-      },
-    };
-  },
-});
-
-const searchTool = defineTool({
-  name: "executor_search",
-  label: "Executor Search",
-  description: "Search Executor tools using Executor's built-in helper path.",
-  promptSnippet: "Search available Executor tools by keyword or namespace.",
-  promptGuidelines: ["Prefer this before guessing Executor tool ids."],
-  parameters: Type.Object({
-    query: Type.String({ description: "Search query" }),
-    namespace: Type.Optional(Type.String({ description: "Optional namespace prefix" })),
-    limit: Type.Optional(Type.Number({ description: "Maximum results" })),
-  }),
-  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-    const { baseUrl, scopeId, result } = await executeSnippet(ctx.cwd, buildSearchSnippet(params));
-    if (!isCompletedNonError(result)) {
-      return {
-        content: [{ type: "text", text: jsonIndent(result) }],
-        details: { baseUrl, scopeId },
-      };
-    }
-
-    const unwrapped = unwrapStructuredResult(result) ?? result.structured;
-    const truncated = await formatJsonResult(unwrapped, "pi-executor-search-");
-    return {
-      content: [{ type: "text", text: truncated.text }],
-      details: {
-        baseUrl,
-        scopeId,
-        fullOutputPath: truncated.fullOutputPath,
-      },
-    };
-  },
-});
-
-const describeTool = defineTool({
-  name: "executor_describe",
-  label: "Executor Describe",
-  description:
-    "Describe an Executor tool, preferring Executor's helper path and falling back to HTTP metadata/schema endpoints.",
-  promptSnippet: "Describe a specific Executor tool id and return its TypeScript-facing shape.",
-  promptGuidelines: [
-    "Use this after executor_search when you need a tool's exact schema or description.",
-  ],
-  parameters: Type.Object({
-    path: Type.String({ description: "Executor tool path" }),
-  }),
-  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-    const { baseUrl, scopeId, result } = await executeSnippet(
-      ctx.cwd,
-      buildDescribeSnippet(params),
-    );
-
-    let described: DescribeResult;
-    if (isCompletedNonError(result)) {
-      const helperResult = toDescribeResult(
-        unwrapStructuredResult(result) ?? result.structured,
-        params.path,
-      );
-      described = helperResult ?? (await describeViaHttp(baseUrl, scopeId, params.path));
-    } else {
-      described = await describeViaHttp(baseUrl, scopeId, params.path);
-    }
-
-    const truncated = await formatJsonResult(described, "pi-executor-describe-");
-    return {
-      content: [{ type: "text", text: truncated.text }],
-      details: {
-        baseUrl,
-        scopeId,
-        fullOutputPath: truncated.fullOutputPath,
-      },
-    };
-  },
-});
-
-const listSourcesTool = defineTool({
-  name: "executor_list_sources",
-  label: "Executor List Sources",
-  description:
-    "List Executor sources, preferring Executor's helper path and falling back to HTTP source listing.",
-  promptSnippet: "List configured Executor sources for the current working directory.",
-  promptGuidelines: ["Use this before asking Executor to access source-backed tools."],
-  parameters: Type.Object({
-    query: Type.Optional(Type.String({ description: "Optional source search query" })),
-    limit: Type.Optional(Type.Number({ description: "Maximum results" })),
-  }),
-  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-    const { baseUrl, scopeId, result } = await executeSnippet(
-      ctx.cwd,
-      buildListSourcesSnippet(params),
-    );
-
-    let sources: SourceListResult[];
-    if (isCompletedNonError(result)) {
-      sources =
-        toSourceList(unwrapStructuredResult(result) ?? result.structured) ??
-        (await listSourcesViaHttp(baseUrl, scopeId));
-    } else {
-      sources = await listSourcesViaHttp(baseUrl, scopeId);
-    }
-
-    const truncated = await formatJsonResult(sources, "pi-executor-sources-");
-    return {
-      content: [{ type: "text", text: truncated.text }],
-      details: {
-        baseUrl,
-        scopeId,
-        fullOutputPath: truncated.fullOutputPath,
-      },
-    };
-  },
-});
-
-const parseJsonObjectString = (text: string): JsonObject => {
-  const parsed = JSON.parse(text) as JsonValue;
-  if (!isJsonObject(parsed)) {
-    throw new Error("contentJson must parse to a JSON object");
-  }
-  return parsed;
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolveLaunch();
+    });
+  });
 };
 
-export const executorTools = [
-  executeTool,
-  resumeTool,
-  searchTool,
-  describeTool,
-  listSourcesTool,
-] satisfies ToolDefinition[];
+const promptForInteraction = async (
+  interaction: WaitingForInteraction,
+  ctx: ExtensionContext,
+): Promise<{ action: ResumeAction; content?: JsonObject }> => {
+  if (interaction.kind === "url" && interaction.url) {
+    try {
+      await launchBrowser(interaction.url);
+      ctx.ui.notify(`Opened ${interaction.url}`, "info");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.ui.notify(`Open this URL manually: ${interaction.url}\n\n${message}`, "warning");
+    }
 
-export const registerExecutorTools = (pi: ExtensionAPI): void => {
-  for (const tool of executorTools) {
+    const action = await ctx.ui.select(
+      "Executor browser interaction",
+      ["accept", "decline", "cancel"],
+      { timeout: undefined },
+    );
+    return { action: (action as ResumeAction | undefined) ?? "cancel" };
+  }
+
+  const requestedSchema = interaction.requestedSchema;
+  if (!hasSchemaProperties(requestedSchema)) {
+    const action = await ctx.ui.select("Executor interaction", ["accept", "decline", "cancel"], {
+      timeout: undefined,
+    });
+    return { action: (action as ResumeAction | undefined) ?? "cancel" };
+  }
+
+  ctx.ui.notify(interaction.message, "info");
+  const prefill = JSON.stringify(buildSchemaTemplate(requestedSchema), null, 2);
+  const edited = await ctx.ui.editor("Executor response JSON", prefill);
+  if (edited === undefined) {
+    return { action: "cancel" };
+  }
+
+  const action = await ctx.ui.select("Submit Executor response", ["accept", "decline", "cancel"], {
+    timeout: undefined,
+  });
+  const resolvedAction = (action as ResumeAction | undefined) ?? "cancel";
+  if (resolvedAction !== "accept") {
+    return { action: resolvedAction };
+  }
+
+  return {
+    action: resolvedAction,
+    content: parseJsonContent(edited),
+  };
+};
+
+const buildExecuteTool = (description: string) =>
+  defineTool({
+    name: "execute",
+    label: "Execute",
+    description,
+    promptSnippet: "Execute TypeScript in Executor's sandboxed runtime with configured API tools.",
+    promptGuidelines: [
+      "Search inside execute before calling Executor tools directly in code.",
+      "Use execute instead of top-level helper tools for Executor discovery and invocation.",
+    ],
+    parameters: Type.Object({
+      code: Type.String({ description: "JavaScript code to execute" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
+      const sidecar = await ensureSidecar(ctx.cwd);
+      const scopeId = sidecar.scope?.id;
+      if (!scopeId) {
+        throw new Error(`Executor sidecar scope id missing for ${ctx.cwd}`);
+      }
+
+      if (ctx.hasUI) {
+        const outcome = await runManagedExecution(
+          {
+            execute: (code) => execute(sidecar.baseUrl, code),
+            resume: (executionId, payload) => resume(sidecar.baseUrl, executionId, payload),
+          },
+          params.code,
+          async (interaction) => promptForInteraction(interaction, ctx),
+        );
+
+        return toToolResult(outcome, { baseUrl: sidecar.baseUrl, scopeId });
+      }
+
+      return toToolResult(normalizeExecuteResponse(await execute(sidecar.baseUrl, params.code)), {
+        baseUrl: sidecar.baseUrl,
+        scopeId,
+      });
+    },
+  });
+
+const buildResumeTool = () =>
+  defineTool({
+    name: "resume",
+    label: "Resume",
+    description: [
+      "Resume a paused execution using the executionId returned by execute.",
+      "Never call this without user approval unless they explicitly state otherwise.",
+    ].join("\n"),
+    promptSnippet: "Resume a paused Executor execution after the user has completed the required interaction.",
+    promptGuidelines: ["Use the exact executionId returned by execute."],
+    parameters: Type.Object({
+      executionId: Type.String({ description: "The execution ID from the paused result" }),
+      action: StringEnum(["accept", "decline", "cancel"] as const),
+      content: Type.Optional(jsonStringSchema),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
+      const sidecar = await ensureSidecar(ctx.cwd);
+      const scopeId = sidecar.scope?.id ?? "";
+
+      try {
+        const result = await resume(sidecar.baseUrl, params.executionId, {
+          action: params.action as ResumeAction,
+          content: parseJsonContent(params.content),
+        });
+
+        return toToolResult(normalizeResumeResponse(result), {
+          baseUrl: sidecar.baseUrl,
+          scopeId,
+        });
+      } catch (error) {
+        const normalized =
+          error instanceof Error ? normalizeResumeNotFound(error, params.executionId) : undefined;
+        if (normalized) {
+          return {
+            ...normalized,
+            details: {
+              ...normalized.details,
+              scopeId,
+            },
+          };
+        }
+        throw error;
+      }
+    },
+  });
+
+export const getToolNamesForSession = (hasUI: boolean): string[] =>
+  hasUI ? ["execute"] : ["execute", "resume"];
+
+export const loadExecutorPrompt = async (cwd: string, hasUI: boolean): Promise<string> => {
+  const sidecar = await ensureSidecar(cwd);
+  const scopeId = sidecar.scope?.id;
+  if (!scopeId) {
+    return buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, hasUI);
+  }
+
+  try {
+    const description = await loadExecuteDescription(sidecar.baseUrl, scopeId);
+    return buildExecutorSystemPrompt(description, hasUI);
+  } catch {
+    return buildExecutorSystemPrompt(DEFAULT_EXECUTE_DESCRIPTION, hasUI);
+  }
+};
+
+export const isExecutorToolDetails = (value: object | null): value is ExecuteToolDetails => {
+  if (!value || !("baseUrl" in value) || !("scopeId" in value) || !("isError" in value)) {
+    return false;
+  }
+
+  return (
+    typeof value.baseUrl === "string" &&
+    typeof value.scopeId === "string" &&
+    typeof value.isError === "boolean"
+  );
+};
+
+export const createExecutorTools = async (cwd: string, hasUI: boolean): Promise<ToolDefinition[]> => {
+  const sidecar = await ensureSidecar(cwd);
+  const scopeId = sidecar.scope?.id;
+  const description = scopeId
+    ? await loadExecuteDescription(sidecar.baseUrl, scopeId).catch(() => DEFAULT_EXECUTE_DESCRIPTION)
+    : DEFAULT_EXECUTE_DESCRIPTION;
+
+  return hasUI ? [buildExecuteTool(description)] : [buildExecuteTool(description), buildResumeTool()];
+};
+
+export const registerExecutorTools = async (
+  pi: ExtensionAPI,
+  cwd: string,
+  hasUI: boolean,
+): Promise<void> => {
+  for (const tool of await createExecutorTools(cwd, hasUI)) {
     pi.registerTool(tool);
   }
 };
 
-export type ExecuteToolInput = Static<(typeof executeTool)["parameters"]>;
-export type ResumeToolInput = Static<(typeof resumeTool)["parameters"]>;
-export type SearchToolInput = Static<(typeof searchTool)["parameters"]>;
-export type DescribeToolInput = Static<(typeof describeTool)["parameters"]>;
-export type ListSourcesToolInput = Static<(typeof listSourcesTool)["parameters"]>;
+export type ExecuteToolInput = Static<ReturnType<typeof buildExecuteTool>["parameters"]>;
+export type ResumeToolInput = Static<ReturnType<typeof buildResumeTool>["parameters"]>;

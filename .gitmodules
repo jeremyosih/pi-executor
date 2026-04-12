@@ -10,3 +10,7 @@
 	path = docs/pi-diff-review
 	url = https://github.com/badlogic/pi-diff-review.git
 	branch = main
+[submodule "docs/typescript-sdk"]
+	path = docs/typescript-sdk
+	url = https://github.com/modelcontextprotocol/typescript-sdk.git
+	branch = main

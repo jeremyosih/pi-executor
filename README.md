@@ -1,16 +1,19 @@
 # pi-executor
 
-Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sidecar and exposes a small Pi surface on top of it.
+Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sidecar and exposes an MCP-parity tool UX on top of it.
 
-## What ships in v1
+## What ships
 
-### Tools
+### Agent-facing tools
 
-- `executor_execute`
-- `executor_resume`
-- `executor_search`
-- `executor_describe`
-- `executor_list_sources`
+- `execute`
+- `resume` only in headless / no-UI sessions
+
+Executor discovery helpers stay inside Executor's runtime and are meant to be used from code executed via `execute`:
+
+- `tools.search(...)`
+- `tools.describe.tool(...)`
+- `tools.executor.sources.list()`
 
 ### Slash commands
 
@@ -25,11 +28,29 @@ Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sideca
 - Pi supervises only sidecars it started itself
 - the extension talks to Executor over local HTTP
 - browser auth, source setup, and secret management stay in Executor's UI
+- `execute` mirrors MCP guidance and namespace discovery as closely as Pi allows
+- when Pi has UI, `execute` handles Executor interaction inline
+- when Pi has no UI, `execute` returns a paused interaction and `resume` is available
 
 ## Install
 
 ```bash
 bun install
+```
+
+## Reference docs submodules
+
+This repo keeps upstream reference repos checked out under `docs/`:
+
+- `docs/executor`
+- `docs/pi-mono`
+- `docs/pi-diff-review`
+- `docs/typescript-sdk` — upstream MCP TypeScript SDK reference
+
+If you clone the repo fresh, initialize them with:
+
+```bash
+git submodule update --init --recursive
 ```
 
 ## Use in Pi
@@ -68,6 +89,17 @@ Stop the Pi-owned sidecar for the current cwd:
 /executor-stop
 ```
 
+Let the agent use Executor:
+
+```text
+Use execute to search for the right tool, inspect its shape, and call it.
+```
+
+Headless fallback:
+
+1. `execute` returns `waiting_for_interaction` with an `executionId`
+2. the agent calls `resume` with that exact id
+
 ## Development
 
 Typecheck:
@@ -76,13 +108,17 @@ Typecheck:
 bun run typecheck
 ```
 
-Run only this package's tests:
+Run this package's tests:
 
 ```bash
-bun run test ./test/executor-sidecar.test.ts ./test/executor-http.test.ts ./test/executor-tools.test.ts ./test/executor-commands.test.ts
+bun run tesst
 ```
 
 ## Troubleshooting
+
+### `resume` is missing
+
+That is expected when Pi has UI available. In UI sessions, `execute` handles interaction inline.
 
 ### Executor runtime bootstrap failed
 
