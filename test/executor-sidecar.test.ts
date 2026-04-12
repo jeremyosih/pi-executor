@@ -31,7 +31,9 @@ const setTempHome = async (): Promise<string> => {
   return dir;
 };
 
-const createRegisteredSidecar = (overrides: Partial<RegisteredSidecar> = {}): RegisteredSidecar => ({
+const createRegisteredSidecar = (
+  overrides: Partial<RegisteredSidecar> = {},
+): RegisteredSidecar => ({
   cwd: "/repo-a",
   pid: 12345,
   port: 4788,
@@ -145,14 +147,15 @@ describe("sidecar helpers", () => {
     const registered = createRegisteredSidecar({ pid: child.pid!, cwd: "/repo-cross-session" });
     await registerSidecarForCwd(registered);
 
-    const fetchMock = mock(async () =>
-      new Response(
-        JSON.stringify({ id: "scope", name: "repo-cross-session", dir: registered.cwd }),
-        {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        },
-      ),
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          JSON.stringify({ id: "scope", name: "repo-cross-session", dir: registered.cwd }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
     );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 

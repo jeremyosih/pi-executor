@@ -37,10 +37,7 @@ export const renderExecutorStatus = (
 
   switch (state.kind) {
     case "ready":
-      ctx.ui.setStatus(
-        "executor",
-        theme.fg("success", "●") + theme.fg("dim", " executor ready"),
-      );
+      ctx.ui.setStatus("executor", theme.fg("success", "●") + theme.fg("dim", " executor ready"));
       return;
     case "connecting":
       ctx.ui.setStatus(
@@ -49,16 +46,10 @@ export const renderExecutorStatus = (
       );
       return;
     case "error":
-      ctx.ui.setStatus(
-        "executor",
-        theme.fg("error", "●") + theme.fg("dim", " executor error"),
-      );
+      ctx.ui.setStatus("executor", theme.fg("error", "●") + theme.fg("dim", " executor error"));
       return;
     default:
-      ctx.ui.setStatus(
-        "executor",
-        theme.fg("dim", "○") + theme.fg("dim", " executor down"),
-      );
+      ctx.ui.setStatus("executor", theme.fg("dim", "○") + theme.fg("dim", " executor down"));
   }
 };
 

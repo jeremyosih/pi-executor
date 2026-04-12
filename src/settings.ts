@@ -31,7 +31,9 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 const normalizeRemoteUrl = (remoteUrl: string): string => remoteUrl.trim().replace(/\/+$/, "");
 
-const sanitizeSettings = (value: Partial<ExecutorSettings> | undefined): Partial<ExecutorSettings> => {
+const sanitizeSettings = (
+  value: Partial<ExecutorSettings> | undefined,
+): Partial<ExecutorSettings> => {
   if (!value) {
     return {};
   }
@@ -70,7 +72,8 @@ const readRootSettings = async (path: string): Promise<RootSettings> => {
     const parsed = JSON.parse(raw) as unknown;
     return isObject(parsed) ? (parsed as RootSettings) : {};
   } catch (error) {
-    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    const code =
+      typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
     if (code === "ENOENT") {
       return {};
     }

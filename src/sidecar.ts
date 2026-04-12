@@ -115,7 +115,8 @@ const readSidecarRegistry = async (): Promise<SidecarRegistryFile> => {
       sidecars,
     };
   } catch (error) {
-    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    const code =
+      typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
     if (code === "ENOENT") {
       return emptySidecarRegistry();
     }
@@ -129,7 +130,9 @@ const writeSidecarRegistry = async (registry: SidecarRegistryFile): Promise<void
   await writeFile(path, JSON.stringify(registry, null, 2) + "\n", "utf8");
 };
 
-export const getRegisteredSidecar = async (cwdInput: string): Promise<RegisteredSidecar | undefined> => {
+export const getRegisteredSidecar = async (
+  cwdInput: string,
+): Promise<RegisteredSidecar | undefined> => {
   const cwd = normalizeDir(cwdInput);
   const registry = await readSidecarRegistry();
   return registry.sidecars[cwd];
@@ -550,7 +553,9 @@ const spawnOwnedSidecar = async (cwd: string, port: number): Promise<SidecarReco
   return record;
 };
 
-export const findRunningSidecarForCwd = async (cwdInput: string): Promise<SidecarRecord | undefined> => {
+export const findRunningSidecarForCwd = async (
+  cwdInput: string,
+): Promise<SidecarRecord | undefined> => {
   const cwd = normalizeDir(cwdInput);
   const cached = sidecarsByCwd.get(cwd);
   if (cached && (await isHealthyRecord(cached))) {

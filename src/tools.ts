@@ -277,7 +277,8 @@ export const isExecutorToolDetails = (value: object | null): value is ExecuteToo
 export const createExecutorTools = async (
   _cwd: string,
   hasUI: boolean,
-): Promise<ToolDefinition[]> => (hasUI ? [buildExecuteTool()] : [buildExecuteTool(), buildResumeTool()]);
+): Promise<ToolDefinition[]> =>
+  hasUI ? [buildExecuteTool()] : [buildExecuteTool(), buildResumeTool()];
 
 export const registerExecutorTools = async (
   pi: ExtensionAPI,

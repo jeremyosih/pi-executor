@@ -87,18 +87,27 @@ const handleExecutorWeb = async (pi: ExtensionAPI, ctx: ExtensionCommandContext)
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    notifyResult(pi, "executor-web", `Executor UI: ${endpoint.baseUrl}\n\nBrowser launch failed: ${message}`, {
-      baseUrl: endpoint.baseUrl,
-      scopeId: endpoint.scope.id,
-      launched: false,
-      mode: endpoint.mode,
-    });
+    notifyResult(
+      pi,
+      "executor-web",
+      `Executor UI: ${endpoint.baseUrl}\n\nBrowser launch failed: ${message}`,
+      {
+        baseUrl: endpoint.baseUrl,
+        scopeId: endpoint.scope.id,
+        launched: false,
+        mode: endpoint.mode,
+      },
+    );
   }
 };
 
-const handleExecutorStart = async (pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> => {
+const handleExecutorStart = async (
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+): Promise<void> => {
   const { endpoint } = await connectExecutor(ctx);
-  const label = endpoint.mode === "remote" ? "Executor remote endpoint ready" : "Executor sidecar ready";
+  const label =
+    endpoint.mode === "remote" ? "Executor remote endpoint ready" : "Executor sidecar ready";
 
   notifyResult(pi, "executor-start", `${label}: ${endpoint.baseUrl}`, {
     baseUrl: endpoint.baseUrl,
@@ -108,7 +117,10 @@ const handleExecutorStart = async (pi: ExtensionAPI, ctx: ExtensionCommandContex
   });
 };
 
-const handleExecutorStop = async (pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> => {
+const handleExecutorStop = async (
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+): Promise<void> => {
   const settings = await resolveExecutorSettings(ctx.cwd);
   if (settings.mode === "remote") {
     notifyResult(
@@ -137,26 +149,27 @@ const handleExecutorStop = async (pi: ExtensionAPI, ctx: ExtensionCommandContext
   }
 
   await refreshExecutorStatus(ctx, settings, ctx.cwd);
-  notifyResult(
-    pi,
-    "executor-stop",
-    "No Executor sidecar is currently running for this cwd.",
-    {
-      cwd: ctx.cwd,
-      stopped: false,
-      reason: "missing",
-    },
-  );
+  notifyResult(pi, "executor-stop", "No Executor sidecar is currently running for this cwd.", {
+    cwd: ctx.cwd,
+    stopped: false,
+    reason: "missing",
+  });
 };
 
-const chooseSettingsScope = async (ctx: ExtensionCommandContext): Promise<SettingsScope | undefined> => {
+const chooseSettingsScope = async (
+  ctx: ExtensionCommandContext,
+): Promise<SettingsScope | undefined> => {
   const scope = await ctx.ui.select("Save executor setting where?", ["project", "global"], {
     timeout: undefined,
   });
   return scope === "project" || scope === "global" ? scope : undefined;
 };
 
-const showSettingsSummary = (pi: ExtensionAPI, cwd: string, settings: Awaited<ReturnType<typeof resolveExecutorSettings>>): void => {
+const showSettingsSummary = (
+  pi: ExtensionAPI,
+  cwd: string,
+  settings: Awaited<ReturnType<typeof resolveExecutorSettings>>,
+): void => {
   notifyResult(
     pi,
     "executor-settings",
@@ -289,7 +302,8 @@ export const registerExecutorCommands = (pi: ExtensionAPI): void => {
   });
 
   pi.registerCommand("executor-stop", {
-    description: "Stop the local Executor sidecar for the current working directory, even if another Pi session started it.",
+    description:
+      "Stop the local Executor sidecar for the current working directory, even if another Pi session started it.",
     handler: async (args, ctx) => {
       assertNoArgs("executor-stop", args);
       await handleExecutorStop(pi, ctx);
