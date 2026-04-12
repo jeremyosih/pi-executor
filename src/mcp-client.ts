@@ -41,15 +41,17 @@ export type ExecutorMcpToolResult = {
 
 type ExecutorMcpClientOptions = {
   hasUI: boolean;
-  onElicitation?: (
-    request: ExecutorElicitationRequest,
-  ) => Promise<ExecutorElicitationResponse>;
+  onElicitation?: (request: ExecutorElicitationRequest) => Promise<ExecutorElicitationResponse>;
 };
 
 type ConnectedExecutorMcpClient = {
   inspect: () => Promise<ExecutorMcpInspection>;
   execute: (code: string) => Promise<ExecutorMcpToolResult>;
-  resume: (executionId: string, action: ResumeAction, content?: JsonObject) => Promise<ExecutorMcpToolResult>;
+  resume: (
+    executionId: string,
+    action: ResumeAction,
+    content?: JsonObject,
+  ) => Promise<ExecutorMcpToolResult>;
   close: () => Promise<void>;
 };
 
@@ -65,7 +67,8 @@ const buildCapabilities = (hasUI: boolean): ClientCapabilities =>
       }
     : {};
 
-const cloneJsonObject = (value: object): JsonObject => JSON.parse(JSON.stringify(value)) as JsonObject;
+const cloneJsonObject = (value: object): JsonObject =>
+  JSON.parse(JSON.stringify(value)) as JsonObject;
 
 const collectText = (content: Array<{ type: string } & Record<string, string>>): string => {
   const textParts: string[] = [];
@@ -88,11 +91,18 @@ const normalizeToolResult = (
     };
   }
 
-  const structuredContent = result.structuredContent ? cloneJsonObject(result.structuredContent) : null;
+  const structuredContent = result.structuredContent
+    ? cloneJsonObject(result.structuredContent)
+    : null;
   const text = collectText(result.content as Array<{ type: string } & Record<string, string>>);
 
   return {
-    text: text.length > 0 ? text : structuredContent ? JSON.stringify(structuredContent, null, 2) : DEFAULT_TEXT_RESULT,
+    text:
+      text.length > 0
+        ? text
+        : structuredContent
+          ? JSON.stringify(structuredContent, null, 2)
+          : DEFAULT_TEXT_RESULT,
     structuredContent,
     isError: result.isError === true,
   };

@@ -168,7 +168,8 @@ const loadExecutorToolset = async (baseUrl: string, hasUI: boolean): Promise<Exe
   const resumeTool = inspection.tools.find((tool) => tool.name === "resume");
 
   return {
-    executeDescription: executeTool?.description ?? inspection.instructions ?? DEFAULT_EXECUTE_DESCRIPTION,
+    executeDescription:
+      executeTool?.description ?? inspection.instructions ?? DEFAULT_EXECUTE_DESCRIPTION,
     resumeDescription: resumeTool?.description ?? DEFAULT_RESUME_DESCRIPTION,
     hasResume: resumeTool !== undefined,
     instructions: inspection.instructions,
@@ -199,7 +200,9 @@ const buildExecuteTool = (description: string) =>
         sidecar.baseUrl,
         {
           hasUI: ctx.hasUI,
-          onElicitation: ctx.hasUI ? (interaction) => promptForInteraction(interaction, ctx) : undefined,
+          onElicitation: ctx.hasUI
+            ? (interaction) => promptForInteraction(interaction, ctx)
+            : undefined,
         },
         async (client) => client.execute(params.code),
       );
@@ -279,7 +282,10 @@ export const createExecutorTools = async (
   }));
 
   return toolset.hasResume
-    ? [buildExecuteTool(toolset.executeDescription), buildResumeTool(toolset.resumeDescription ?? DEFAULT_RESUME_DESCRIPTION)]
+    ? [
+        buildExecuteTool(toolset.executeDescription),
+        buildResumeTool(toolset.resumeDescription ?? DEFAULT_RESUME_DESCRIPTION),
+      ]
     : [buildExecuteTool(toolset.executeDescription)];
 };
 

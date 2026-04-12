@@ -21,7 +21,9 @@ const createTestMcpServer = (): McpServer => {
     async ({ code }) => {
       if (code === "pause") {
         return {
-          content: [{ type: "text", text: "Execution paused: Need approval\n\nexecutionId: exec_1" }],
+          content: [
+            { type: "text", text: "Execution paused: Need approval\n\nexecutionId: exec_1" },
+          ],
           structuredContent: {
             status: "waiting_for_interaction",
             executionId: "exec_1",
@@ -62,7 +64,10 @@ const createTestMcpServer = (): McpServer => {
           content: [
             {
               type: "text",
-              text: response.action === "accept" && response.content?.approved ? "approved" : response.action,
+              text:
+                response.action === "accept" && response.content?.approved
+                  ? "approved"
+                  : response.action,
             },
           ],
           structuredContent: { status: "completed", result: response.content ?? null },

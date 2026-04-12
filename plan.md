@@ -113,8 +113,8 @@ rule:
 ref: `src/index.ts`
 
 ```ts
-await registerExecutorTools(pi, ctx.cwd, ctx.hasUI)
-systemPrompt: `${event.systemPrompt}\n\n${await loadExecutorPrompt(ctx.cwd, ctx.hasUI)}`
+await registerExecutorTools(pi, ctx.cwd, ctx.hasUI);
+systemPrompt: `${event.systemPrompt}\n\n${await loadExecutorPrompt(ctx.cwd, ctx.hasUI)}`;
 ```
 
 ref: `src/tools.ts`
@@ -127,11 +127,11 @@ const outcome = await runManagedExecution(
   },
   params.code,
   async (interaction) => promptForInteraction(interaction, ctx),
-)
+);
 ```
 
 ```ts
-return hasUI ? [buildExecuteTool(description)] : [buildExecuteTool(description), buildResumeTool()]
+return hasUI ? [buildExecuteTool(description)] : [buildExecuteTool(description), buildResumeTool()];
 ```
 
 meaning:
@@ -149,7 +149,7 @@ export const execute = async (baseUrl: string, code: string): Promise<ExecuteRes
   fetchJson(baseUrl, "/api/executions", parseExecuteResponse, {
     method: "POST",
     body: { code },
-  })
+  });
 ```
 
 ```ts
@@ -173,12 +173,12 @@ ref: `docs/executor/apps/local/src/serve.ts`
 
 ```ts
 if (url.pathname.startsWith("/mcp")) {
-  return handlers.mcp.handleRequest(req)
+  return handlers.mcp.handleRequest(req);
 }
 
 if (url.pathname.startsWith("/api/") || url.pathname === "/api") {
-  url.pathname = url.pathname.slice("/api".length) || "/"
-  return handlers.api.handler(new Request(url, req))
+  url.pathname = url.pathname.slice("/api".length) || "/";
+  return handlers.api.handler(new Request(url, req));
 }
 ```
 
@@ -192,32 +192,32 @@ meaning:
 ref: `docs/executor/packages/hosts/mcp/src/server.ts`
 
 ```ts
-const description = await engine.getDescription()
+const description = await engine.getDescription();
 ```
 
 ```ts
 if (supportsManagedElicitation(server)) {
   const result = await engine.execute(code, {
     onElicitation: makeMcpElicitationHandler(server),
-  })
-  return toMcpResult(formatExecuteResult(result))
+  });
+  return toMcpResult(formatExecuteResult(result));
 }
 
-const outcome = await engine.executeWithPause(code)
+const outcome = await engine.executeWithPause(code);
 return outcome.status === "completed"
   ? toMcpResult(formatExecuteResult(outcome.result))
-  : toMcpPausedResult(formatPausedExecution(outcome.execution))
+  : toMcpPausedResult(formatPausedExecution(outcome.execution));
 ```
 
 ```ts
 const syncToolAvailability = () => {
-  executeTool.enable()
+  executeTool.enable();
   if (supportsManagedElicitation(server)) {
-    resumeTool.disable()
+    resumeTool.disable();
   } else {
-    resumeTool.enable()
+    resumeTool.enable();
   }
-}
+};
 ```
 
 meaning:
@@ -264,20 +264,20 @@ meaning:
 ref: `docs/executor/packages/hosts/mcp/src/server.test.ts`
 
 ```ts
-const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities })
+const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities });
 ```
 
 ```ts
 client.setRequestHandler(ElicitRequestSchema, async () => ({
   action: "accept" as const,
   content: { approved: true },
-}))
+}));
 ```
 
 ```ts
-const { tools } = await client.listTools()
-expect(names).toContain("execute")
-expect(names).not.toContain("resume")
+const { tools } = await client.listTools();
+expect(names).toContain("execute");
+expect(names).not.toContain("resume");
 ```
 
 meaning:
@@ -298,15 +298,15 @@ v1.x remains the recommended version for production use
 ref: `docs/typescript-sdk/docs/client.md`
 
 ```ts
-const client = new Client({ name: 'my-client', version: '1.0.0' })
-const transport = new StreamableHTTPClientTransport(new URL('http://localhost:3000/mcp'))
-await client.connect(transport)
+const client = new Client({ name: "my-client", version: "1.0.0" });
+const transport = new StreamableHTTPClientTransport(new URL("http://localhost:3000/mcp"));
+await client.connect(transport);
 ```
 
 ```ts
-client.setRequestHandler('elicitation/create', async request => {
-  return { action: 'accept', content: { confirm: true } }
-})
+client.setRequestHandler("elicitation/create", async (request) => {
+  return { action: "accept", content: { confirm: true } };
+});
 ```
 
 meaning:
