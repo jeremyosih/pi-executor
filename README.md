@@ -26,7 +26,7 @@ pi install npm:pi-executor
 
 Restart or /Reload Pi after installation.
 
-Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sidecar and exposes two agent facing tools and one skill to guide you agent into using executor. 
+Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sidecar and exposes two agent facing tools and one skill to guide you agent into using executor.
 
 ### Agent-facing tools
 
@@ -39,14 +39,13 @@ Executor discovery helpers stay inside Executor's runtime and are meant to be us
 - `tools.describe.tool(...)`
 - `tools.executor.sources.list()`
 
-
 ### Commands
 
-| Command | What it does |
-|---------|--------------|
-| `/executor-web` | Open the Web UI (manage sources) |
-| `/executor-start` | Start the executor sidecar |
-| `/executor-stop` | Stop the executor sidecar |
+| Command              | What it does                     |
+| -------------------- | -------------------------------- |
+| `/executor-web`      | Open the Web UI (manage sources) |
+| `/executor-start`    | Start the executor sidecar       |
+| `/executor-stop`     | Stop the executor sidecar        |
 | `/executor-settings` | Executor local & global settings |
 
 ## Runtime model
