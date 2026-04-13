@@ -4,7 +4,7 @@
 
 Use any MCP / OpenAPI or GRAPHQL api with [Pi](https://github.com/badlogic/pi-mono/) securely and without burning your context window. (code-mode)
 
-# Add Demo Video here !
+https://github.com/user-attachments/assets/b6287e44-be8f-450a-bca0-a7728f1ed7b7
 
 ## Why This Exists
 
