@@ -1,6 +1,6 @@
 {
   "name": "pi-executor",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Pi extension to run executor",
   "keywords": [
     "code-mode",
@@ -13,6 +13,12 @@
   "bugs": {
     "url": "https://github.com/jeremyosih/pi-executor/issues"
   },
+  "files": [
+    "src",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
   "license": "MIT",
   "author": "Jeremy Osih",
   "repository": {
