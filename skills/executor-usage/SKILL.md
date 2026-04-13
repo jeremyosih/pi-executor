@@ -146,12 +146,14 @@ await tools.search({ namespace: "mcp_linear_app", query: "issues", limit: 10 });
 ## Decision rule
 
 Use Executor when the task is mostly **outside the repo**:
+
 - SaaS APIs
 - remote systems
 - configured MCP / OpenAPI / GraphQL integrations
 - auth- or approval-managed actions
 
 Use Pi's native file tools when the task is mostly **inside the repo**:
+
 - reading files
 - editing code
 - refactors

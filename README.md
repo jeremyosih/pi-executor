@@ -1,8 +1,32 @@
 # pi-executor
 
-Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sidecar and exposes an MCP-parity tool UX on top of it.
+# Pi MCP Adapter
 
-## What ships
+Use any MCP / OpenAPI or GRAPHQL api with [Pi](https://github.com/badlogic/pi-mono/) securely and without burning your context window. (code-mode)
+
+# Add Demo Video here !
+
+## Why This Exists
+
+Mario wrote about [why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/). The problem: tool definitions are verbose. A single MCP server can burn 10k+ tokens, and you're paying that cost whether you use those tools or not. Connect a few servers and you've burned half your context window before the conversation starts.
+
+His take: skip MCP entirely, write simple CLI tools instead.
+
+Rhys wrote about [the execution layer](https://x.com/RhysSullivan/status/2030903539871154193). The problem: MCP and CLI tools are usually just APIs with extra ceremony on top. Bash helped because it gave models an execution surface, but it doesn't solve the real problems: auth, approvals, permissions, state, and discoverability.
+
+His take: use a real execution layer.
+
+This adapter gives you access to that execution layer without the bloat.
+
+## Install
+
+```bash
+pi install npm:pi-executor
+```
+
+Restart or /Reload Pi after installation.
+
+Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sidecar and exposes two agent facing tools and one skill to guide you agent into using executor. 
 
 ### Agent-facing tools
 
@@ -15,12 +39,15 @@ Executor discovery helpers stay inside Executor's runtime and are meant to be us
 - `tools.describe.tool(...)`
 - `tools.executor.sources.list()`
 
-### Slash commands
 
-- `/executor-web`
-- `/executor-start`
-- `/executor-stop`
-- `/executor-settings`
+### Commands
+
+| Command | What it does |
+|---------|--------------|
+| `/executor-web` | Open the Web UI (manage sources) |
+| `/executor-start` | Start the executor sidecar |
+| `/executor-stop` | Stop the executor sidecar |
+| `/executor-settings` | Executor local & global settings |
 
 ## Runtime model
 
@@ -39,21 +66,6 @@ Executor discovery helpers stay inside Executor's runtime and are meant to be us
 
 ```bash
 bun install
-```
-
-## Reference docs submodules
-
-This repo keeps upstream reference repos checked out under `docs/`:
-
-- `docs/executor`
-- `docs/pi-mono`
-- `docs/pi-diff-review`
-- `docs/typescript-sdk` — upstream MCP TypeScript SDK reference
-
-If you clone the repo fresh, initialize them with:
-
-```bash
-git submodule update --init --recursive
 ```
 
 ## Use in Pi
@@ -84,99 +96,6 @@ You can also manage these interactively with `/executor-settings`.
 
 ## Use in Pi
 
-Quick test with an explicit extension path:
+Isolated project mode (loads only `pi-executor`, with no skills and no other extensions):
 
-```bash
-pi -e ./src/index.ts
-```
-
-Project-local auto-discovery:
-
-```bash
-mkdir -p .pi/extensions
-ln -sf ../../src/index.ts .pi/extensions/pi-executor.ts
-pi
-```
-
-## Example flows
-
-Open the Executor UI:
-
-```text
-/executor-web
-```
-
-Start the cwd-scoped sidecar without opening the browser:
-
-```text
-/executor-start
-```
-
-Stop the Pi-owned sidecar for the current cwd:
-
-```text
-/executor-stop
-```
-
-Let the agent use Executor:
-
-```text
-Use execute to search for the right tool, inspect its shape, and call it.
-```
-
-Headless fallback:
-
-1. `execute` returns `waiting_for_interaction` with an `executionId`
-2. the agent calls `resume` with that exact id
-
-## Development
-
-Typecheck:
-
-```bash
-bun run typecheck
-```
-
-Run this package's tests:
-
-```bash
-bun run tesst
-```
-
-## Troubleshooting
-
-### `resume` is missing
-
-That is expected when Pi has UI available. In UI sessions, `execute` handles interaction inline.
-
-### Executor runtime bootstrap failed
-
-The extension resolves `executor/package.json`, then uses `postinstall.cjs` to install the runtime binary into `node_modules/executor/bin/runtime/` when needed.
-
-Try:
-
-```bash
-bun install
-```
-
-If the binary is still missing, reinstall `executor` or rerun its install step.
-
-### No free sidecar port found
-
-v1 scans ports `4788..4819`.
-If that window is full, stop stale local Executor processes or widen the port window in code.
-
-### Browser launch failed
-
-`/executor-web` still reports the local URL even if `open`, `xdg-open`, or `cmd /c start` fails.
-Open the printed URL manually.
-
-### Sidecar startup timed out
-
-The extension waits for `GET /api/scope` to succeed and match the current cwd.
-If startup times out, inspect the sidecar stderr/stdout included in the thrown error and verify Executor itself runs locally.
-
-### Scope mismatch
-
-The extension only reuses a sidecar when `/api/scope.dir` matches the current cwd exactly.
-If reuse fails, a new sidecar is started for the current project.
+Project-local settings in `.pi/settings.json` also disable project-local skills/prompts/themes and point Pi at `src/index.ts`, but global Pi resources can still load unless you use the isolated command above.

@@ -16,8 +16,8 @@ const EXECUTE_DESCRIPTION = [
   "## Workflow",
   "",
   '1. `const matches = await tools.search({ query: "linear issues", limit: 5 });`',
-  '2. `const path = matches[0]?.path;`',
-  '3. `const details = await tools.describe.tool({ path });`',
+  "2. `const path = matches[0]?.path;`",
+  "3. `const details = await tools.describe.tool({ path });`",
   '4. `const result = await tools.mcp_linear_app.list_issues({ project: "proj", limit: 5 });`',
 ].join("\n");
 
@@ -163,7 +163,9 @@ describe("executor prompt + tool descriptions", () => {
     const prompt = await loadExecutorPrompt(cwd, true);
 
     expect(prompt).toContain(EXECUTE_DESCRIPTION);
-    expect(prompt).toContain("Use execute for Executor work and let it handle any interaction inline.");
+    expect(prompt).toContain(
+      "Use execute for Executor work and let it handle any interaction inline.",
+    );
   });
 
   test("createExecutorTools uses inspected MCP descriptions for execute and resume", async () => {
