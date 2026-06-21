@@ -1,77 +1,63 @@
 # pi-executor
 
-# Pi MCP Adapter
-
-Use any MCP / OpenAPI or GRAPHQL api with [Pi](https://github.com/badlogic/pi-mono/) securely and without burning your context window. (code-mode)
+Pi extension for using [Executor](https://executor.sh) from [Pi](https://github.com/badlogic/pi-mono/) without loading every MCP, OpenAPI, or GraphQL tool definition into the model context up front.
 
 https://github.com/user-attachments/assets/b6287e44-be8f-450a-bca0-a7728f1ed7b7
 
 ## Why This Exists
 
-Mario wrote about [why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/). The problem: tool definitions are verbose. A single MCP server can burn 10k+ tokens, and you're paying that cost whether you use those tools or not. Connect a few servers and you've burned half your context window before the conversation starts.
+MCP servers and API adapters can expose a lot of tool metadata. A single server can spend thousands of tokens on definitions before the agent has even decided which tool it needs.
 
-His take: skip MCP entirely, write simple CLI tools instead.
-
-Rhys wrote about [the execution layer](https://x.com/RhysSullivan/status/2030903539871154193). The problem: MCP and CLI tools are usually just APIs with extra ceremony on top. Bash helped because it gave models an execution surface, but it doesn't solve the real problems: auth, approvals, permissions, state, and discoverability.
-
-His take: use a real execution layer.
-
-This adapter gives you access to that execution layer without the bloat.
+`pi-executor` keeps that surface behind Executor. Pi gets a small, stable extension interface, while Executor handles the larger execution layer: API discovery, auth, approvals, permissions, state, and source management.
 
 ## Install
+
+Install the extension in Pi:
 
 ```bash
 pi install npm:pi-executor
 ```
 
-Restart or /Reload Pi after installation.
+Restart Pi or run `/Reload` after installation.
 
-Pi extension that runs a cwd-scoped local [Executor](https://executor.sh) sidecar and exposes two agent facing tools and one skill to guide you agent into using executor.
+## Quick Start
 
-### Agent-facing tools
+1. Run `/executor-start` to start or connect to Executor for the current project.
+2. Run `/executor-web` to open Executor's UI.
+3. Configure the MCP, OpenAPI, or GraphQL sources you want Executor to manage.
+4. Ask Pi to use those sources. The extension exposes `execute`, and the bundled `executor-usage` skill teaches the agent how to discover and call Executor tools safely.
 
-- `execute`
-- `resume` only in headless / no-UI sessions
+## What It Provides
 
-Executor discovery helpers stay inside Executor's runtime and are meant to be used from code executed via `execute`:
+### Agent-Facing Tools
 
-- `tools.search(...)`
-- `tools.describe.tool(...)`
-- `tools.executor.sources.list()`
+- `execute`: runs TypeScript in Executor's sandbox with access to configured API tools.
+- `resume`: resumes a paused Executor interaction in headless or no-UI sessions.
+
+Executor discovery helpers are called from inside `execute`, not as separate Pi tools:
+
+```ts
+await tools.search({ query: "github pull requests", limit: 5 });
+await tools.describe.tool({ path: "mcp_github.list_pull_requests" });
+await tools.executor.sources.list({});
+```
+
+### Skill
+
+- `executor-usage`: documents the required discovery-first calling pattern for Executor tools.
 
 ### Commands
 
-| Command              | What it does                     |
-| -------------------- | -------------------------------- |
-| `/executor-web`      | Open the Web UI (manage sources) |
-| `/executor-start`    | Start the executor sidecar       |
-| `/executor-stop`     | Stop the executor sidecar        |
-| `/executor-settings` | Executor local & global settings |
-
-## Runtime model
-
-- configurable local or remote Executor endpoint per project
-- local mode uses one cwd-scoped Executor sidecar per working directory
-- healthy same-cwd local sidecars are reused across calls
-- Pi supervises only local sidecars it started itself
-- remote mode connects to `piExecutor.remoteUrl` and never spawns a local sidecar
-- the extension talks to Executor over HTTP
-- browser auth, source setup, and secret management stay in Executor's UI
-- `execute` mirrors MCP guidance and namespace discovery as closely as Pi allows
-- when Pi has UI, `execute` handles Executor interaction inline
-- when Pi has no UI, `execute` returns a paused interaction and `resume` is available
-
-## Install
-
-```bash
-bun install
-```
-
-## Use in Pi
+| Command              | What it does                             |
+| -------------------- | ---------------------------------------- |
+| `/executor-start`    | Start or connect to Executor             |
+| `/executor-web`      | Open Executor's web UI for source setup  |
+| `/executor-stop`     | Stop the local sidecar owned by Pi       |
+| `/executor-settings` | View or update local and global settings |
 
 ## Settings
 
-Configure the extension in `~/.pi/agent/settings.json` or `.pi/settings.json`:
+Configure the extension globally in `~/.pi/agent/settings.json` or per project in `.pi/settings.json`:
 
 ```json
 {
@@ -85,16 +71,41 @@ Configure the extension in `~/.pi/agent/settings.json` or `.pi/settings.json`:
 }
 ```
 
-- `mode`: `"local"` or `"remote"`
-- `autoStart`: connect on session start
-- `remoteUrl`: required for remote mode
-- `showFooterStatus`: show the footer readiness dot
-- `stopLocalOnShutdown`: stop Pi-owned local sidecars on session shutdown
+| Setting               | Default   | Description                                      |
+| --------------------- | --------- | ------------------------------------------------ |
+| `mode`                | `"local"` | Use `"local"` sidecar mode or `"remote"` mode    |
+| `autoStart`           | `true`    | Connect to Executor when a Pi session starts     |
+| `remoteUrl`           | `""`      | Executor base URL used when `mode` is `"remote"` |
+| `showFooterStatus`    | `true`    | Show Executor readiness in Pi's footer           |
+| `stopLocalOnShutdown` | `true`    | Stop Pi-owned local sidecars on session shutdown |
 
-You can also manage these interactively with `/executor-settings`.
+You can also manage these settings interactively with `/executor-settings`.
 
-## Use in Pi
+## Runtime Model
 
-Isolated project mode (loads only `pi-executor`, with no skills and no other extensions):
+- Local mode runs one cwd-scoped Executor sidecar per working directory.
+- Healthy same-cwd local sidecars are reused across calls.
+- Pi supervises only the local sidecars it started itself.
+- Remote mode connects to `piExecutor.remoteUrl` and never starts a local sidecar.
+- Browser auth, source setup, and secret management stay in Executor's UI.
+- `execute` handles Executor interactions inline when Pi has UI support.
+- In headless sessions, `execute` can return a paused interaction and `resume` is available to continue it.
 
-Project-local settings in `.pi/settings.json` also disable project-local skills/prompts/themes and point Pi at `src/index.ts`, but global Pi resources can still load unless you use the isolated command above.
+## Development
+
+Install dependencies:
+
+```bash
+bun install
+```
+
+Useful checks:
+
+```bash
+bun test test
+bun run typecheck
+bun run lint
+bun run fmt:check
+```
+
+The package entrypoint is `src/index.ts`, and the bundled Pi skill lives in `skills/executor-usage`.
