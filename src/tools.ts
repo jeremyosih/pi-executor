@@ -1,4 +1,7 @@
 import { StringEnum, Type, type Static } from "@mariozechner/pi-ai";
+import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   defineTool,
   type ExtensionAPI,
@@ -8,6 +11,8 @@ import {
 import type { JsonObject, JsonValue } from "./http.ts";
 import type { ResumeAction, ExecutorMcpInspection } from "./mcp-client.ts";
 import { inspectExecutorMcp, withExecutorMcpClient } from "./mcp-client.ts";
+import { createExecutorOAuthProvider } from "./oauth-auth.ts";
+import { createOAuthCallback } from "./oauth-callback.ts";
 import {
   buildExecutorSystemPrompt,
   parseJsonContent,
@@ -105,6 +110,28 @@ const launchBrowser = async (url: string): Promise<void> => {
       resolveLaunch();
     });
   });
+};
+
+const createRemoteOAuthSession = async (baseUrl: string, interactive: boolean) => {
+  const state = randomBytes(32).toString("base64url");
+  const callback = interactive ? await createOAuthCallback({ state }) : undefined;
+  const provider = createExecutorOAuthProvider({
+    serverUrl: baseUrl,
+    storageRoot: join(homedir(), ".pi", "executor", "oauth"),
+    redirectUrl: callback?.redirectUrl ?? "http://127.0.0.1/oauth-callback",
+    state,
+    redirectToAuthorization: (url) => {
+      if (!interactive) {
+        throw new Error("Remote Executor authorization requires an interactive Pi session.");
+      }
+      return launchBrowser(url.href);
+    },
+  });
+  return {
+    oauthProvider: provider,
+    ...(callback ? { waitForAuthorizationCode: callback.waitForCode } : {}),
+    close: () => callback?.close(),
+  };
 };
 
 const promptForInteraction = async (
@@ -275,31 +302,45 @@ const buildExecuteTool = (description: string) =>
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
       const endpoint = await connectExecutor(ctx);
-
-      const outcome = await withExecutorMcpClient(
-        endpoint.baseUrl,
-        {
-          hasUI: ctx.hasUI,
-          onElicitation: ctx.hasUI
-            ? (interaction) =>
-                promptForInteraction(
-                  interaction.mode === "url"
-                    ? {
-                        mode: "url",
-                        message: interaction.message,
-                        url: interaction.url,
-                      }
-                    : {
-                        mode: "form",
-                        message: interaction.message,
-                        requestedSchema: interaction.requestedSchema,
-                      },
-                  ctx,
-                )
-            : undefined,
-        },
-        async (client) => client.execute(params.code),
-      );
+      const oauthSession =
+        endpoint.mode === "remote"
+          ? await createRemoteOAuthSession(endpoint.baseUrl, ctx.hasUI)
+          : undefined;
+      let outcome;
+      try {
+        outcome = await withExecutorMcpClient(
+          endpoint.baseUrl,
+          {
+            hasUI: ctx.hasUI,
+            ...(oauthSession
+              ? {
+                  oauthProvider: oauthSession.oauthProvider,
+                  waitForAuthorizationCode: oauthSession.waitForAuthorizationCode,
+                }
+              : {}),
+            onElicitation: ctx.hasUI
+              ? (interaction) =>
+                  promptForInteraction(
+                    interaction.mode === "url"
+                      ? {
+                          mode: "url",
+                          message: interaction.message,
+                          url: interaction.url,
+                        }
+                      : {
+                          mode: "form",
+                          message: interaction.message,
+                          requestedSchema: interaction.requestedSchema,
+                        },
+                    ctx,
+                  )
+              : undefined,
+          },
+          async (client) => client.execute(params.code),
+        );
+      } finally {
+        await oauthSession?.close();
+      }
 
       return toToolResult(outcome, { baseUrl: endpoint.baseUrl, scopeId: endpoint.scope.id });
     },
@@ -320,17 +361,33 @@ const buildResumeTool = (description: string) =>
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
       const endpoint = await connectExecutor(ctx);
-
-      const outcome = await withExecutorMcpClient(
-        endpoint.baseUrl,
-        { hasUI: false },
-        async (client) =>
-          client.resume(
-            params.executionId,
-            params.action as ResumeAction,
-            parseJsonContent(params.content),
-          ),
-      );
+      const oauthSession =
+        endpoint.mode === "remote"
+          ? await createRemoteOAuthSession(endpoint.baseUrl, false)
+          : undefined;
+      let outcome;
+      try {
+        outcome = await withExecutorMcpClient(
+          endpoint.baseUrl,
+          {
+            hasUI: false,
+            ...(oauthSession
+              ? {
+                  oauthProvider: oauthSession.oauthProvider,
+                  waitForAuthorizationCode: oauthSession.waitForAuthorizationCode,
+                }
+              : {}),
+          },
+          async (client) =>
+            client.resume(
+              params.executionId,
+              params.action as ResumeAction,
+              parseJsonContent(params.content),
+            ),
+        );
+      } finally {
+        await oauthSession?.close();
+      }
 
       return toToolResult(outcome, {
         baseUrl: endpoint.baseUrl,

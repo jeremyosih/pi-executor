@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ElicitRequestSchema, type ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
 import type { JsonObject, JsonValue } from "./http.ts";
@@ -41,6 +42,8 @@ export type ExecutorMcpToolResult = {
 
 type ExecutorMcpClientOptions = {
   hasUI: boolean;
+  oauthProvider?: OAuthClientProvider;
+  waitForAuthorizationCode?: () => Promise<string>;
   onElicitation?: (request: ExecutorElicitationRequest) => Promise<ExecutorElicitationResponse>;
 };
 
@@ -112,38 +115,80 @@ const connectExecutorMcpClient = async (
   baseUrl: string,
   options: ExecutorMcpClientOptions,
 ): Promise<ConnectedExecutorMcpClient> => {
-  const client = new Client(
-    { name: "pi-executor", version: "0.0.1" },
-    { capabilities: buildCapabilities(options.hasUI) },
-  );
-  const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseUrl));
-
-  const onElicitation = options.onElicitation;
-  if (onElicitation) {
-    client.setRequestHandler(ElicitRequestSchema, async (request) => {
-      const params = request.params;
-      const response = await onElicitation(
-        params.mode === "url"
-          ? {
-              mode: "url",
-              message: params.message,
-              url: params.url,
-              elicitationId: params.elicitationId,
-            }
-          : {
-              mode: "form",
-              message: params.message,
-              requestedSchema: cloneJsonObject(params.requestedSchema),
-            },
-      );
-
-      return response.content
-        ? { action: response.action, content: response.content }
-        : { action: response.action };
+  let authorizationRedirected = false;
+  let authorizationRedirectError: unknown;
+  const authProvider = options.oauthProvider
+    ? {
+        ...options.oauthProvider,
+        redirectToAuthorization: async (url: URL) => {
+          authorizationRedirected = true;
+          try {
+            await options.oauthProvider?.redirectToAuthorization(url);
+          } catch (error) {
+            authorizationRedirectError = error;
+            throw error;
+          }
+        },
+      }
+    : undefined;
+  const createConnection = () => {
+    const client = new Client(
+      { name: "pi-executor", version: "0.0.1" },
+      { capabilities: buildCapabilities(options.hasUI) },
+    );
+    const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseUrl), {
+      authProvider,
     });
-  }
+    if (options.onElicitation) {
+      client.setRequestHandler(ElicitRequestSchema, async (request) => {
+        const params = request.params;
+        const response = await options.onElicitation!(
+          params.mode === "url"
+            ? {
+                mode: "url",
+                message: params.message,
+                url: params.url,
+                elicitationId: params.elicitationId,
+              }
+            : {
+                mode: "form",
+                message: params.message,
+                requestedSchema: cloneJsonObject(params.requestedSchema),
+              },
+        );
 
-  await client.connect(transport);
+        return response.content
+          ? { action: response.action, content: response.content }
+          : { action: response.action };
+      });
+    }
+    return { client, transport };
+  };
+
+  let { client, transport } = createConnection();
+  try {
+    await client.connect(transport);
+  } catch (error) {
+    if (authorizationRedirectError) {
+      await transport.terminateSession().catch(() => undefined);
+      await client.close().catch(() => undefined);
+      throw authorizationRedirectError;
+    }
+    if (!authorizationRedirected || !options.oauthProvider || !options.waitForAuthorizationCode) {
+      throw error;
+    }
+    try {
+      await transport.finishAuth(await options.waitForAuthorizationCode());
+      await transport.terminateSession().catch(() => undefined);
+      await client.close().catch(() => undefined);
+      ({ client, transport } = createConnection());
+      await client.connect(transport);
+    } catch (authorizationError) {
+      await transport.terminateSession().catch(() => undefined);
+      await client.close().catch(() => undefined);
+      throw authorizationError;
+    }
+  }
 
   const listTools = async (): Promise<ExecutorMcpToolMetadata[]> => {
     const tools: ExecutorMcpToolMetadata[] = [];

@@ -100,6 +100,16 @@ Configure the extension in `~/.pi/agent/settings.json` or `.pi/settings.json`:
 
 You can also manage these interactively with `/executor-settings`.
 
+### Remote Executor authentication
+
+When a remote MCP endpoint requires OAuth, an interactive Pi `execute` call opens
+the authorization page in the system browser and completes the login through a
+temporary localhost callback. OAuth client registration and tokens are stored
+outside the project in `~/.pi/executor/oauth/`, in per-server JSON files with
+user-only permissions where supported. These files contain credentials in
+plaintext; protect your user account and do not share or commit them. Headless
+calls reuse saved tokens but cannot start an interactive login.
+
 ## Use in Pi
 
 Isolated project mode (loads only `pi-executor`, with no skills and no other extensions):
