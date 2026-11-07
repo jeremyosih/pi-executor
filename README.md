@@ -67,6 +67,7 @@ Executor discovery helpers stay inside Executor's runtime and are meant to be us
 - `execute` mirrors MCP guidance and namespace discovery as closely as Pi allows
 - when Pi has UI, `execute` handles Executor interaction inline
 - when Pi has no UI, `execute` returns a paused interaction and `resume` is available
+- the opt-in persistent client channel lets Executor call bounded, read-only workspace capabilities provided by Pi
 
 ## Install
 
@@ -87,7 +88,9 @@ Configure the extension in `~/.pi/agent/settings.json` or `.pi/settings.json`:
     "autoStart": true,
     "remoteUrl": "",
     "showFooterStatus": true,
-    "stopLocalOnShutdown": true
+    "stopLocalOnShutdown": true,
+    "clientChannelEnabled": false,
+    "clientChannelProtocol": "auto"
   }
 }
 ```
@@ -97,6 +100,26 @@ Configure the extension in `~/.pi/agent/settings.json` or `.pi/settings.json`:
 - `remoteUrl`: required for remote mode
 - `showFooterStatus`: show the footer readiness dot
 - `stopLocalOnShutdown`: stop Pi-owned local sidecars on session shutdown
+- `clientChannelEnabled`: opt in to expose read-only workspace tools, a workspace index resource, and an overview prompt to authenticated Executor sessions
+- `clientChannelProtocol`: `"auto"` uses self-host framing for local sidecars and Cloud registration for remote endpoints; set `"self-host"` for a remote self-hosted Executor
+
+The client channel requires `EXECUTOR_ACCESS_TOKEN` in Pi's environment. The
+bearer token is sent in `Authorization` headers; Executor's opaque channel
+binding is kept in memory and sent in `x-executor-client-token` headers on the
+WebSocket and MCP requests. Remote endpoints require HTTPS/WSS; plain HTTP/WS
+is allowed only for localhost. Neither token is stored in project settings.
+The channel is disabled by default. When enabled, Executor can read
+UTF-8 files (up to 1 MiB) and list files under Pi's current workspace; it cannot
+write files, follow symbolic links, or traverse outside the workspace. Common
+credential paths (including `.env`, `.ssh`, `.aws`, and `.kube`) are excluded.
+The connection is session-scoped and reconnects automatically. When enabled, capabilities
+from an active `pi-mcp-adapter` session are proxied through its versioned in-process Pi events
+bridge; pi-executor does not read MCP configuration files or start/close MCP transports.
+Calls use the adapter-managed connections. The opt-in remote channel grants its endpoint the
+ability to invoke configured MCP tools, read resources, and get prompts using the adapter
+session's authority. Enable it only for trusted Executor endpoints and server configurations.
+The channel is opt-in and does not expose local servers when disabled. Enable it with
+`/executor-settings`; restart the Pi session after changing the setting.
 
 You can also manage these interactively with `/executor-settings`.
 

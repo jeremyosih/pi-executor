@@ -11,6 +11,8 @@ export type ExecutorSettings = {
   remoteUrl: string;
   showFooterStatus: boolean;
   stopLocalOnShutdown: boolean;
+  clientChannelEnabled: boolean;
+  clientChannelProtocol: "auto" | "cloud" | "self-host";
 };
 
 type RootSettings = {
@@ -24,6 +26,8 @@ const DEFAULT_SETTINGS: ExecutorSettings = {
   remoteUrl: "",
   showFooterStatus: true,
   stopLocalOnShutdown: true,
+  clientChannelEnabled: false,
+  clientChannelProtocol: "auto",
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -54,6 +58,16 @@ const sanitizeSettings = (
   }
   if (typeof value.stopLocalOnShutdown === "boolean") {
     sanitized.stopLocalOnShutdown = value.stopLocalOnShutdown;
+  }
+  if (typeof value.clientChannelEnabled === "boolean") {
+    sanitized.clientChannelEnabled = value.clientChannelEnabled;
+  }
+  if (
+    value.clientChannelProtocol === "auto" ||
+    value.clientChannelProtocol === "cloud" ||
+    value.clientChannelProtocol === "self-host"
+  ) {
+    sanitized.clientChannelProtocol = value.clientChannelProtocol;
   }
 
   return sanitized;
@@ -138,4 +152,6 @@ export const formatExecutorSettings = (settings: ExecutorSettings): string[] => 
   `remoteUrl: ${settings.remoteUrl || "(not set)"}`,
   `showFooterStatus: ${settings.showFooterStatus}`,
   `stopLocalOnShutdown: ${settings.stopLocalOnShutdown}`,
+  `clientChannelEnabled: ${settings.clientChannelEnabled}`,
+  `clientChannelProtocol: ${settings.clientChannelProtocol}`,
 ];

@@ -137,7 +137,7 @@ const createTestMcpServer = (): McpServer => {
   return server;
 };
 
-const startServer = (): string => {
+const startServer = (onRequest?: (request: Request) => void): string => {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
   const sessions = new Map<string, McpServer>();
 
@@ -153,6 +153,7 @@ const startServer = (): string => {
   const instance = Bun.serve({
     port: 0,
     fetch: async (request) => {
+      onRequest?.(request);
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const transport = transports.get(sessionId);
@@ -238,6 +239,22 @@ describe("mcp client bridge", () => {
     );
     expect(failed.isError).toBe(true);
     expect(failed.text).toBe("boom");
+  });
+
+  test("includes the client-channel binding on MCP requests", async () => {
+    const channelTokens: Array<string | null> = [];
+    const baseUrl = startServer((request) => {
+      channelTokens.push(request.headers.get("x-executor-client-token"));
+    });
+
+    await withExecutorMcpClient(
+      baseUrl,
+      { hasUI: false, clientChannelToken: "opaque-channel-binding" },
+      (client) => client.execute("return 1"),
+    );
+
+    expect(channelTokens.length).toBeGreaterThan(0);
+    expect(channelTokens.every((token) => token === "opaque-channel-binding")).toBe(true);
   });
 
   test("resumes paused executions through MCP", async () => {

@@ -41,11 +41,13 @@
     "@executor-js/sdk": "^0.0.1-beta.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "executor": "^1.4.4",
+    "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
     "@types/bun": "latest",
+    "@types/ws": "^8.18.1",
     "husky": "^9.1.7",
     "oxfmt": "^0.43.0",
     "oxlint": "^1.58.0",

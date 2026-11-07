@@ -52,6 +52,8 @@ describe("executor settings", () => {
       remoteUrl: "https://executor.example.com",
       showFooterStatus: true,
       stopLocalOnShutdown: true,
+      clientChannelEnabled: false,
+      clientChannelProtocol: "auto",
     });
   });
 

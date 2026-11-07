@@ -1,12 +1,14 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { registerExecutorCommands } from "./commands.ts";
 import { resolveExecutorEndpoint } from "./connection.ts";
+import { startExecutorClientChannel, type ClientChannelController } from "./client-channel.ts";
 import { resolveExecutorSettings } from "./settings.ts";
 import { refreshExecutorStatus, renderExecutorStatus, setExecutorState } from "./status.ts";
 import { shutdownOwnedSidecars } from "./sidecar.ts";
 import { isExecutorToolDetails, loadExecutorPrompt, registerExecutorTools } from "./tools.ts";
 
 const registeredToolSets = new Set<string>();
+const clientChannels = new Map<string, ClientChannelController>();
 
 export default function (pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
@@ -18,6 +20,33 @@ export default function (pi: ExtensionAPI): void {
 
     const settings = await resolveExecutorSettings(ctx.cwd);
     await refreshExecutorStatus(ctx, settings, ctx.cwd);
+
+    if (settings.clientChannelEnabled && !clientChannels.has(ctx.cwd)) {
+      try {
+        const endpoint = await resolveExecutorEndpoint(ctx.cwd);
+        let connectionWarningShown = false;
+        const channel = startExecutorClientChannel(
+          ctx.cwd,
+          endpoint,
+          settings,
+          (state, message) => {
+            if (state === "connected") {
+              connectionWarningShown = false;
+              ctx.ui.notify("Executor client channel connected.", "info");
+            } else if (state === "error" && message && !connectionWarningShown) {
+              connectionWarningShown = true;
+              ctx.ui.notify(`Executor client channel: ${message}`, "warning");
+            }
+          },
+          pi,
+          ctx,
+        );
+        clientChannels.set(ctx.cwd, channel);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(`Executor client channel could not start: ${message}`, "warning");
+      }
+    }
 
     if (!settings.autoStart) {
       return;
@@ -60,6 +89,12 @@ export default function (pi: ExtensionAPI): void {
   registerExecutorCommands(pi);
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    const channel = clientChannels.get(ctx.cwd);
+    if (channel) {
+      clientChannels.delete(ctx.cwd);
+      await channel.stop();
+    }
+
     const settings = await resolveExecutorSettings(ctx.cwd);
     if (!settings.stopLocalOnShutdown) {
       return;

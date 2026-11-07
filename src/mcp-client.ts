@@ -41,6 +41,7 @@ export type ExecutorMcpToolResult = {
 
 type ExecutorMcpClientOptions = {
   hasUI: boolean;
+  clientChannelToken?: string;
   onElicitation?: (request: ExecutorElicitationRequest) => Promise<ExecutorElicitationResponse>;
 };
 
@@ -116,7 +117,11 @@ const connectExecutorMcpClient = async (
     { name: "pi-executor", version: "0.0.1" },
     { capabilities: buildCapabilities(options.hasUI) },
   );
-  const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseUrl));
+  const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseUrl), {
+    requestInit: options.clientChannelToken
+      ? { headers: { "x-executor-client-token": options.clientChannelToken } }
+      : undefined,
+  });
 
   const onElicitation = options.onElicitation;
   if (onElicitation) {

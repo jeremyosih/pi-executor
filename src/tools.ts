@@ -19,6 +19,7 @@ import { resolveExecutorEndpoint } from "./connection.ts";
 import { resolveExecutorSettings } from "./settings.ts";
 import { renderExecutorStatus, setExecutorState } from "./status.ts";
 import { findRunningSidecarForCwd } from "./sidecar.ts";
+import { getExecutorClientChannelToken } from "./client-channel.ts";
 
 const DEFAULT_EXECUTE_DESCRIPTION =
   "Execute TypeScript in a sandboxed runtime with access to configured API tools.";
@@ -275,11 +276,13 @@ const buildExecuteTool = (description: string) =>
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
       const endpoint = await connectExecutor(ctx);
+      const clientChannelToken = await getExecutorClientChannelToken(ctx.cwd);
 
       const outcome = await withExecutorMcpClient(
         endpoint.baseUrl,
         {
           hasUI: ctx.hasUI,
+          clientChannelToken,
           onElicitation: ctx.hasUI
             ? (interaction) =>
                 promptForInteraction(
@@ -320,10 +323,11 @@ const buildResumeTool = (description: string) =>
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ExecuteToolResult> {
       const endpoint = await connectExecutor(ctx);
+      const clientChannelToken = await getExecutorClientChannelToken(ctx.cwd);
 
       const outcome = await withExecutorMcpClient(
         endpoint.baseUrl,
-        { hasUI: false },
+        { hasUI: false, clientChannelToken },
         async (client) =>
           client.resume(
             params.executionId,

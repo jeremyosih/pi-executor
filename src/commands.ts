@@ -180,6 +180,8 @@ const showSettingsSummary = (
       `remoteUrl: ${settings.remoteUrl || "(not set)"}`,
       `showFooterStatus: ${settings.showFooterStatus}`,
       `stopLocalOnShutdown: ${settings.stopLocalOnShutdown}`,
+      `clientChannelEnabled: ${settings.clientChannelEnabled}`,
+      `clientChannelProtocol: ${settings.clientChannelProtocol}`,
       `cwd: ${cwd}`,
     ].join("\n"),
     {
@@ -189,6 +191,8 @@ const showSettingsSummary = (
       remoteUrl: settings.remoteUrl,
       showFooterStatus: settings.showFooterStatus,
       stopLocalOnShutdown: settings.stopLocalOnShutdown,
+      clientChannelEnabled: settings.clientChannelEnabled,
+      clientChannelProtocol: settings.clientChannelProtocol,
     },
   );
 };
@@ -210,6 +214,8 @@ const handleExecutorSettings = async (
         `set remoteUrl (${settings.remoteUrl || "not set"})`,
         `toggle footer status (${settings.showFooterStatus})`,
         `toggle stop on shutdown (${settings.stopLocalOnShutdown})`,
+        `toggle client channel (${settings.clientChannelEnabled})`,
+        `set client channel protocol (${settings.clientChannelProtocol})`,
         "done",
       ],
       { timeout: undefined },
@@ -277,6 +283,32 @@ const handleExecutorSettings = async (
     if (action.startsWith("toggle stop on shutdown")) {
       const next = await updateExecutorSettings(ctx.cwd, scope, {
         stopLocalOnShutdown: !settings.stopLocalOnShutdown,
+      });
+      await refreshExecutorStatus(ctx, next, ctx.cwd);
+      showSettingsSummary(pi, ctx.cwd, next);
+      continue;
+    }
+
+    if (action.startsWith("toggle client channel")) {
+      const next = await updateExecutorSettings(ctx.cwd, scope, {
+        clientChannelEnabled: !settings.clientChannelEnabled,
+      });
+      await refreshExecutorStatus(ctx, next, ctx.cwd);
+      showSettingsSummary(pi, ctx.cwd, next);
+      continue;
+    }
+
+    if (action.startsWith("set client channel protocol")) {
+      const protocol = await ctx.ui.select(
+        "Executor client-channel protocol",
+        ["auto", "cloud", "self-host"],
+        { timeout: undefined },
+      );
+      if (protocol !== "auto" && protocol !== "cloud" && protocol !== "self-host") {
+        continue;
+      }
+      const next = await updateExecutorSettings(ctx.cwd, scope, {
+        clientChannelProtocol: protocol,
       });
       await refreshExecutorStatus(ctx, next, ctx.cwd);
       showSettingsSummary(pi, ctx.cwd, next);
