@@ -1,3 +1,10 @@
+<p align="center">
+  <img src="https://img.shields.io/badge/%E2%9A%A0%EF%B8%8F%20DEPRECATED-Pi%20now%20ships%20with%20MCP%20%E2%80%94%20this%20project%20is%20now%20useless-red?style=for-the-badge" alt="Deprecated: Pi now ships with MCP — this project is now useless">
+</p>
+
+> [!IMPORTANT]
+> Pi now ships with native MCP support. Use Pi's native MCP to connect to Executor instead of this adapter.
+
 # pi-executor
 
 # Pi MCP Adapter
